@@ -129,12 +129,34 @@ struct spank_option spank_options[] =
 const char*
 _get_base_tmpdir()
 {
-  const char      *tmpdir;
-  
-  if ( base_tmpdir ) return base_tmpdir;
-  return "/tmp";
+  return ( base_tmpdir ? base_tmpdir : "/tmp" );
 }
 
+/*
+ * @function _sprint_tmpdir
+ *
+ * Fill a character buffer with the tmpdir name to be used.
+ *
+ */
+int
+_sprint_tmpdir(
+  char            *buffer,
+  size_t          buffer_capacity,
+  uint32_t        job_id,
+  uint32_t        job_step_id
+)
+{
+  size_t          actual_len;
+  const char      *tmpdir = _get_base_tmpdir();
+  
+  if ( ! should_create_per_step_tmpdirs || ((job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT)) ) {
+    actual_len = snprintf(buffer, buffer_capacity, "%s/%u", tmpdir, job_id);
+  } else {
+    actual_len = snprintf(buffer, buffer_capacity, "%s/%u/%u", tmpdir, job_id, job_step_id);
+  }
+  if ( (actual_len > 0) && (actual_len < buffer_capacity) ) return actual_len;
+  return -1;
+}
 
 /*
  * @function _mktmpdir
@@ -144,9 +166,12 @@ _get_base_tmpdir()
  */
 int
 _mktmpdir(
-  spank_t         spank,
+  spank_t         spank_ctxt,
   char            *outTmpDir,
-  size_t          outTmpDirLen
+  size_t          outTmpDirLen,
+  int             shouldSetOwner,
+  uid_t           ownerUid,
+  gid_t           ownerGid
 )
 {
   uint32_t      job_id = 0;
@@ -155,11 +180,11 @@ _mktmpdir(
   int           actual_len = 0;
   
   /* Get the job id and step id: */
-  if ( spank_get_item(spank, S_JOB_ID, &job_id) != ESPANK_SUCCESS ) {
+  if ( spank_get_item(spank_ctxt, S_JOB_ID, &job_id) != ESPANK_SUCCESS ) {
     slurm_error("auto_tmpdir: no job id associated with job??");
     return (-1);
   }
-  if ( spank_get_item(spank, S_JOB_STEPID, &job_step_id) != ESPANK_SUCCESS ) {
+  if ( spank_get_item(spank_ctxt, S_JOB_STEPID, &job_step_id) != ESPANK_SUCCESS ) {
     slurm_error("auto_tmpdir: no step id associated with job %u??", job_id);
     return (-1);
   }
@@ -168,13 +193,9 @@ _mktmpdir(
   tmpdir = _get_base_tmpdir();
   
   /* Decide which format the directory should use and determine string length: */
-  if ( ! should_create_per_step_tmpdirs || (job_step_id == SLURM_BATCH_SCRIPT) ) {
-    actual_len = snprintf(outTmpDir, outTmpDirLen, "%s/%u", tmpdir, job_id);
-  } else {
-    actual_len = snprintf(outTmpDir, outTmpDirLen, "%s/%u/%u", tmpdir, job_id, job_step_id);
-  }
+  actual_len = _sprint_tmpdir(outTmpDir, outTmpDirLen, job_id, job_step_id);
   
-  /* If the snprintf() failed then we've got big problems: */
+  /* If that failed then we've got big problems: */
   if ( (actual_len < 0) || (actual_len >= outTmpDirLen) ) {
     slurm_error("auto_tmpdir: Failure while creating new tmpdir path: %d", actual_len);
     return (-1);
@@ -191,6 +212,10 @@ _mktmpdir(
           slurm_error("auto_tmpdir: failed creating job tmpdir: %s", outTmpDir);
           return (-1);
         }
+        if ( shouldSetOwner && (chown(outTmpDir, ownerUid, ownerGid) != 0) ) {
+          slurm_error("auto_tmpdir: failed setting ownership on job tmpdir: %s", outTmpDir);
+          return (-1);
+        }
         stat(outTmpDir, &finfo);
       }
       if ( ! S_ISDIR(finfo.st_mode) ) {
@@ -198,12 +223,16 @@ _mktmpdir(
         return (-1);
       }
       
-      /* If this isn't the batch portion of a job, worry about the step subdir: */
-      if ( should_create_per_step_tmpdirs && (job_step_id != SLURM_BATCH_SCRIPT) ) {
+      /* If this isn't the batch/extern portion of a job, worry about the step subdir: */
+      if ( should_create_per_step_tmpdirs && ((job_step_id != SLURM_BATCH_SCRIPT) && (job_step_id != SLURM_EXTERN_CONT)) ) {
         actual_len = snprintf(outTmpDir, outTmpDirLen, "%s/%u/%u", tmpdir, job_id, job_step_id);
         if ( stat(outTmpDir, &finfo) != 0 ) {
           if ( mkdir(outTmpDir, 0700) != 0 ) {
             slurm_error("auto_tmpdir: failed creating step tmpdir: %s", outTmpDir);
+            return (-1);
+          }
+          if ( shouldSetOwner && (chown(outTmpDir, ownerUid, ownerGid) != 0) ) {
+            slurm_error("auto_tmpdir: failed setting ownership on step tmpdir: %s", outTmpDir);
             return (-1);
           }
           stat(outTmpDir, &finfo);
@@ -314,6 +343,9 @@ _rmdir_recurse(
  * registered as they do under LOCAL and REMOTE.  So under that context
  * we explicitly register our cli options.
  *
+ * In the REMOTE context, go ahead and create the temp directory and
+ * assign appropriate ownership.
+ *
  */
 int
 slurm_spank_init(
@@ -325,52 +357,48 @@ slurm_spank_init(
   int                     rc = ESPANK_SUCCESS;
   int                     i;
   
-  if ( spank_context() == S_CTX_ALLOCATOR ) {
-    struct spank_option   *o = spank_options;
-    
-    while ( o->name && (rc == ESPANK_SUCCESS) ) rc = spank_option_register(spank_ctxt, o++);
-  }
+  switch ( spank_context() ) {
   
+    case S_CTX_ALLOCATOR: {
+      struct spank_option   *o = spank_options;
+      
+      while ( o->name && (rc == ESPANK_SUCCESS) ) rc = spank_option_register(spank_ctxt, o++);
+      break;
+    }
+    
+    case S_CTX_REMOTE: {
+      char          tmpdir[PATH_MAX];
+      int           tmpdirlen = 0;
+      uid_t         jobUid = -1;
+      gid_t         jobGid = -1;
+        
+      
+      if ((rc = spank_get_item (spank_ctxt, S_JOB_UID, &jobUid)) != ESPANK_SUCCESS) {
+        slurm_error ("auto_tmpdir: remote: unable to get job's user id");
+        return rc;
+      }
+      if ((rc = spank_get_item (spank_ctxt, S_JOB_GID, &jobGid)) != ESPANK_SUCCESS) {
+        slurm_error ("auto_tmpdir: remote: unable to get job's group id");
+        return rc;
+      }
+      tmpdirlen = _mktmpdir(spank_ctxt, tmpdir, sizeof(tmpdir), 1, jobUid, jobGid);
+      if ( tmpdirlen > 0 ) {
+        if ( setenv("TMPDIR", tmpdir, 1) < 0 ) {
+          slurm_error("setenv(TMPDIR, \"%s\"): %m", tmpdir);
+          rc = ESPANK_ERROR;
+        }
+        slurm_verbose("auto_tmpdir: TMPDIR = %s (%d:%d)", tmpdir, jobUid, jobGid);
+      }
+      break;
+    }
+    
+  }
   return rc;
 }
 
 
 /*
- * @function slurm_spank_local_user_init
- *
- * Set job-specific TMPDIR in environment.  For batch scripts the path
- * uses just the job id; for all others, the path uses the job id, a dot,
- * and the job step id.  The value of TMPDIR handed to us by SLURM is
- * the base path for the new TMPDIR; if SLURM doesn't hand us a TMPDIR
- * then we default to using /tmp as our base directory.
- *
- * This function does not actually create the directory.
- *
- * (Called from srun after allocation before launch.)
- */
-int
-slurm_spank_local_user_init(
-  spank_t       spank_ctxt,
-  int           argc,
-  char          *argv[]
-)
-{
-  char          tmpdir[PATH_MAX];
-  int           tmpdirlen = _mktmpdir(spank_ctxt, tmpdir, sizeof(tmpdir));
-  
-  if ( tmpdirlen > 0 ) {
-    if ( setenv("TMPDIR", tmpdir, 1) < 0 ) {
-      slurm_error("setenv(TMPDIR, \"%s\"): %m", tmpdir);
-      return (-1);
-    }
-    slurm_verbose("auto_tmpdir: TMPDIR = %s", tmpdir);
-  }
-  return (0);
-}
-
-
-/*
- * @function slurm_spank_user_init
+ * @function slurm_spank_task_init
  *
  * Set job-specific TMPDIR in environment.  For batch scripts the path
  * uses just the job id; for all others, the path uses the job id, a dot,
@@ -383,14 +411,14 @@ slurm_spank_local_user_init(
  * (Called from slurmstepd after it starts.)
  */
 int
-slurm_spank_user_init(
+slurm_spank_task_init(
   spank_t       spank_ctxt,
   int           argc,
   char          *argv[]
 )
 {
   char          tmpdir[PATH_MAX];
-  int           tmpdirlen = _mktmpdir(spank_ctxt, tmpdir, sizeof(tmpdir));
+  int           tmpdirlen = _mktmpdir(spank_ctxt, tmpdir, sizeof(tmpdir), 0, 0, 0);
   
   if ( tmpdirlen > 0 ) {
     if ( spank_setenv(spank_ctxt, "TMPDIR", tmpdir, tmpdirlen) != ESPANK_SUCCESS ) {
@@ -417,49 +445,54 @@ slurm_spank_exit(
   char          **av
 )
 {
+  int          rc = ESPANK_SUCCESS;
+  
   if ( should_remove_tmpdir ) {
     if ( spank_remote(spank_ctxt) ) {
       char            tmpdir[PATH_MAX];
+      size_t          tmpdir_len;
+      uint32_t        job_id = 0;
+      uint32_t        job_step_id = 0;
       
-      if ( spank_getenv(spank_ctxt, "TMPDIR", tmpdir, sizeof(tmpdir)) == ESPANK_SUCCESS ) {
-        uid_t         jobUid = -1;
-        struct stat   finfo;
-
-        if (spank_get_item (spank_ctxt, S_JOB_UID, &jobUid) != ESPANK_SUCCESS) {
-          slurm_error ("auto_tmpdir: remote: unable to get job's user id");
-          return (-1);
-        }
-        
-        if ( (stat(tmpdir, &finfo) == 0) && S_ISDIR(finfo.st_mode) ) {
-          if ( _rmdir_recurse(tmpdir, jobUid) != 0 ) {
-            slurm_error("auto_tmpdir: remote: Unable to remove TMPDIR at exit (failure in _rmdir_recurse(%s,%d))", tmpdir, jobUid);
-            return (-1);
-          }
-          slurm_verbose("auto_tmpdir: remote: rm -rf %s", tmpdir);
-        } else {
-          slurm_error("auto_tmpdir: remote: failed stat check of %s (uid = %d, st_mode = %x, errno = %d)", tmpdir, jobUid, finfo.st_mode, errno);
-        }
+      /* Get the job id and step id: */
+      if ( spank_get_item(spank_ctxt, S_JOB_ID, &job_id) != ESPANK_SUCCESS ) {
+        slurm_error("auto_tmpdir: no job id associated with job??");
+        return (-1);
       }
-    } else if ( should_create_per_step_tmpdirs ) {
-      const char      *tmpdir = getenv("TMPDIR");
+      if ( spank_get_item(spank_ctxt, S_JOB_STEPID, &job_step_id) != ESPANK_SUCCESS ) {
+        slurm_error("auto_tmpdir: no step id associated with job %u??", job_id);
+        return (-1);
+      }
       
-      if ( tmpdir ) {
-        uid_t         jobUid = geteuid();
-        struct stat   finfo;
-        
-        /* We don't care if the directory doesn't exist anymore... */
-        if ( stat(tmpdir, &finfo) == 0 ) {
-          /*  ...but if it does, let's get rid of it. */
-          if ( S_ISDIR(finfo.st_mode) ) {
-            if ( _rmdir_recurse(tmpdir, jobUid) != 0 ) {
-              slurm_error("auto_tmpdir: local: Unable to remove TMPDIR at exit (failure in _rmdir_recurse(%s,%d))", tmpdir, jobUid);
-              return (-1);
+      /* Create the path for this job sub-step: */
+      tmpdir_len = _sprint_tmpdir(tmpdir, sizeof(tmpdir), job_id, job_step_id);
+      if ( tmpdir_len > 0 ) {
+        /* If we're ignoring sub-step directories, then this can ONLY be deleted when
+         * the extern/batch step exits:
+         */
+        if ( should_create_per_step_tmpdirs || ((job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT)) ) {
+          uid_t         jobUid = -1;
+          struct stat   finfo;
+
+          if (spank_get_item (spank_ctxt, S_JOB_UID, &jobUid) != ESPANK_SUCCESS) {
+            slurm_error ("auto_tmpdir: remote: unable to get job's user id");
+            rc = ESPANK_ERROR;
+          } else {
+            if ( (stat(tmpdir, &finfo) == 0) && S_ISDIR(finfo.st_mode) ) {
+              if ( _rmdir_recurse(tmpdir, jobUid) != 0 ) {
+                slurm_error("auto_tmpdir: remote: Unable to remove TMPDIR at exit (failure in _rmdir_recurse(%s,%d))", tmpdir, jobUid);
+                rc = ESPANK_ERROR;
+              } else {
+                slurm_verbose("auto_tmpdir: remote: rm -rf %s", tmpdir);
+              }
+            } else {
+              slurm_error("auto_tmpdir: remote: failed stat check of %s (uid = %d, st_mode = %x, errno = %d)", tmpdir, jobUid, finfo.st_mode, errno);
+              /* This is not necessarily an error -- the user could have removed it. */
             }
-            slurm_verbose("auto_tmpdir: local: rm -rf %s", tmpdir);
           }
         }
       }
     }
   }
-  return (0);
+  return rc;
 }
