@@ -22,6 +22,17 @@
 SPANK_PLUGIN(auto_tmpdir, 1)
 
 /*
+ * Default TMPDIR prefix:
+ */
+static const char *default_tmpdir_prefix = "/tmp";
+
+/*
+ * Lustre-oriented TMPDIR prefix:
+ */
+static const char *lustre_tmpdir_prefix = "/lustre/scratch/slurm";
+
+
+/*
  * What's the base directory to use for temp files?
  */
 static char *base_tmpdir = NULL;
@@ -96,6 +107,29 @@ static int _opt_no_step_tmpdir(
 
 
 /*
+ * Place the tmpdir on Lustre? (overridden by --tmpdir)
+ */
+static int should_create_on_lustre = 0;
+
+/*
+ * @function _opt_use_lustre_tmpdir
+ *
+ * Parse the --use-lustre-tmpdir option.
+ *
+ */
+static int _opt_use_lustre_tmpdir(
+  int         val,
+  const char  *optarg,
+  int         remote
+)
+{
+  should_create_on_lustre = 1;
+  slurm_verbose("auto_tmpdir:  should create tempororary directories on /lustre/scratch");
+  return ESPANK_SUCCESS;
+}
+
+
+/*
  * Options available to this spank plugin:
  */
 struct spank_option spank_options[] =
@@ -111,6 +145,10 @@ struct spank_option spank_options[] =
     { "no-rm-tmpdir", NULL,
       "Do not automatically remove temporary directories for the job/steps.",
       0, 0, (spank_opt_cb_f) _opt_no_rm_tmpdir },
+      
+    { "use-lustre-tmpdir", NULL,
+      "Create temporary directories on /lustre/scratch (overridden by --tmpdir).",
+      0, 0, (spank_opt_cb_f) _opt_use_lustre_tmpdir },
       
     SPANK_OPTIONS_TABLE_END
   };
@@ -129,7 +167,9 @@ struct spank_option spank_options[] =
 const char*
 _get_base_tmpdir()
 {
-  return ( base_tmpdir ? base_tmpdir : "/tmp" );
+  if ( base_tmpdir ) return base_tmpdir;
+  if ( should_create_on_lustre ) return lustre_tmpdir_prefix;
+  return default_tmpdir_prefix;
 }
 
 /*
@@ -486,7 +526,7 @@ slurm_spank_exit(
                 slurm_verbose("auto_tmpdir: remote: rm -rf %s", tmpdir);
               }
             } else {
-              slurm_error("auto_tmpdir: remote: failed stat check of %s (uid = %d, st_mode = %x, errno = %d)", tmpdir, jobUid, finfo.st_mode, errno);
+              slurm_verbose("auto_tmpdir: remote: failed stat check of %s (uid = %d, st_mode = %x, errno = %d)", tmpdir, jobUid, finfo.st_mode, errno);
               /* This is not necessarily an error -- the user could have removed it. */
             }
           }
