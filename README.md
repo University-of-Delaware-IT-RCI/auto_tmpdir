@@ -10,7 +10,7 @@ The plugin accepts the following command-line options to srun/salloc/sbatch:
       --no-step-tmpdir        Do not create per-step sub-directories.
       --no-rm-tmpdir          Do not automatically remove temporary directories
                               for the job/steps.
-      --use-lustre-tmpdir     Create temporary directories on /lustre/scratch
+      --use-shared-tmpdir     Create temporary directories on shared storage
                               (overridden by --tmpdir).
 ```
 
@@ -20,4 +20,4 @@ The `--no-step-tmpdir` option forces all job steps to use the batch `$TMPDIR` (i
 
 By default, when a job step completes its per-step temporary sub-directory is removed from the filesystem; when the batch job completes the job temporary directory (`/tmp/8451`) is removed.  The temporary directories/files can be left behind using the `--no-rm-tmpdir` option.
 
-The `--use-lustre-tmpdir` option changes the default base directory from `/tmp` to `/lustre/scratch/slurm` -- shared large-scale scratch storage.
+The `--use-shared-tmpdir` option changes the default base directory from `/tmp` to a shared large-scale scratch storage path configured at build time (e.g. on a Lustre file system).

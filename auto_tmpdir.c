@@ -16,6 +16,9 @@
 #include <slurm/spank.h>
 #include <slurm/slurm.h>
 
+#define XSTR(A) STR(A)
+#define STR(A) #A
+
 /*
  * All spank plugins must define this macro for the SLURM plugin loader.
  */
@@ -27,9 +30,11 @@ SPANK_PLUGIN(auto_tmpdir, 1)
 static const char *default_tmpdir_prefix = "/tmp";
 
 /*
- * Lustre-oriented TMPDIR prefix:
+ * Shared TMPDIR prefix:
  */
-static const char *lustre_tmpdir_prefix = "/lustre/scratch/slurm";
+#ifdef WITH_SHARED_STORAGE
+static const char *shared_tmpdir_prefix = XSTR(SHARED_STORAGE_PATH);
+#endif
 
 /*
  * Directory format strings:
@@ -112,29 +117,29 @@ static int _opt_no_step_tmpdir(
     return ESPANK_SUCCESS;
 }
 
+#ifdef WITH_SHARED_STORAGE
+/*
+ * Place the tmpdir on shared storage? (overridden by --tmpdir)
+ */
+static int should_create_on_shared = 0;
 
 /*
- * Place the tmpdir on Lustre? (overridden by --tmpdir)
- */
-static int should_create_on_lustre = 0;
-
-/*
- * @function _opt_use_lustre_tmpdir
+ * @function _opt_use_shared_tmpdir
  *
- * Parse the --use-lustre-tmpdir option.
+ * Parse the --use-shared-tmpdir option.
  *
  */
-static int _opt_use_lustre_tmpdir(
+static int _opt_use_shared_tmpdir(
     int         val,
     const char  *optarg,
     int         remote
 )
 {
-    should_create_on_lustre = 1;
-    slurm_verbose("auto_tmpdir:  should create tempororary directories on /lustre/scratch");
+    should_create_on_shared = 1;
+    slurm_verbose("auto_tmpdir:  should create tempororary directories on %s", shared_tmpdir_prefix);
     return ESPANK_SUCCESS;
 }
-
+#endif
 
 /*
  * Options available to this spank plugin:
@@ -153,9 +158,11 @@ struct spank_option spank_options[] =
             "Do not automatically remove temporary directories for the job/steps.",
             0, 0, (spank_opt_cb_f) _opt_no_rm_tmpdir },
 
-        { "use-lustre-tmpdir", NULL,
-            "Create temporary directories on /lustre/scratch (overridden by --tmpdir).",
-            0, 0, (spank_opt_cb_f) _opt_use_lustre_tmpdir },
+#ifdef WITH_SHARED_STORAGE
+        { "use-shared-tmpdir", NULL,
+            "Create temporary directories on shared storage (overridden by --tmpdir).",
+            0, 0, (spank_opt_cb_f) _opt_use_shared_tmpdir },
+#endif
 
         SPANK_OPTIONS_TABLE_END
     };
@@ -179,14 +186,24 @@ _get_base_tmpdir()
     const char      *path = NULL;
     int             had_initial_error = 0;
     
+#ifdef WITH_SHARED_STORAGE
     if ( base_tmpdir ) {
         path = base_tmpdir;
     }
-    else if ( should_create_on_lustre ) {
-        path = lustre_tmpdir_prefix;
-    } else {
+    else if ( should_create_on_shared ) {
+        path = shared_tmpdir_prefix;
+    }
+    else {
         path = default_tmpdir_prefix;
     }
+#else
+    if ( base_tmpdir ) {
+        path = base_tmpdir;
+    }
+    else {
+        path = default_tmpdir_prefix;
+    }
+#endif
 
 retry_test:
     if ( access(path, R_OK|W_OK|X_OK) == 0 ) {
@@ -196,20 +213,26 @@ retry_test:
     slurm_error("auto_tmpdir: no access to temporary directory base path: %s", path);
     
     if ( path == base_tmpdir ) {
-        if ( should_create_on_lustre ) {
-            path = lustre_tmpdir_prefix;
+#ifdef WITH_SHARED_STORAGE
+        if ( should_create_on_shared ) {
+            path = shared_tmpdir_prefix;
         } else {
             path = default_tmpdir_prefix;
         }
+#else
+        path = default_tmpdir_prefix;
+#endif
         had_initial_error = 1;
         goto retry_test;
     }
-    else if ( path == lustre_tmpdir_prefix ) {
+#ifdef WITH_SHARED_STORAGE
+    else if ( path == shared_tmpdir_prefix ) {
         path = default_tmpdir_prefix;
         had_initial_error = 1;
         goto retry_test;
     }
-    
+#endif
+
     return NULL;
 }
 
