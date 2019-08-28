@@ -40,7 +40,11 @@ static const char *shared_tmpdir_prefix = XSTR(SHARED_STORAGE_PATH);
  * Directory format strings:
  */
 static const char *job_dir_sprintf_format = "%s/job_%u";
-static const char *job_step_dir_sprintf_format = "%s/job_%u/step_%u";
+static const char *job_step_dir_sprintf_format = "%s/job_%u/step_%u.%u";
+#ifdef WITH_SHARED_STORAGE
+static const char *pernode_job_dir_sprintf_format = "%s/job_%u/%s";
+static const char *pernode_job_step_dir_sprintf_format = "%s/job_%u/%s/step_%u.%u";
+#endif
 
 
 /*
@@ -64,7 +68,7 @@ static int _opt_tmpdir(
         slurm_error("auto_tmpdir:  invalid path to --tmpdir: %s", optarg);
         return ESPANK_BAD_ARG;
     }
-    
+
     if ( base_tmpdir ) free(base_tmpdir);
     base_tmpdir = strdup(optarg);
     slurm_verbose("auto_tmpdir:  temporary directories under %s", base_tmpdir);
@@ -122,6 +126,7 @@ static int _opt_no_step_tmpdir(
  * Place the tmpdir on shared storage? (overridden by --tmpdir)
  */
 static int should_create_on_shared = 0;
+static int should_add_pernode_on_shared = 0;
 
 /*
  * @function _opt_use_shared_tmpdir
@@ -137,6 +142,19 @@ static int _opt_use_shared_tmpdir(
 {
     should_create_on_shared = 1;
     slurm_verbose("auto_tmpdir:  should create tempororary directories on %s", shared_tmpdir_prefix);
+
+    /*
+     * Check the optarg to see if "per-node" is being requested:
+     */
+    if ( optarg && strcmp(optarg, "(null)") ) {
+        if ( strcmp(optarg, "per-node") == 0 ) {
+            should_add_pernode_on_shared = 1;
+        } else {
+            slurm_error("auto_tmpdir:  invalid --use-shared-tmpdir optional value: %s", optarg);
+            return ESPANK_BAD_ARG;
+        }
+    }
+
     return ESPANK_SUCCESS;
 }
 #endif
@@ -160,8 +178,8 @@ struct spank_option spank_options[] =
 
 #ifdef WITH_SHARED_STORAGE
         { "use-shared-tmpdir", NULL,
-            "Create temporary directories on shared storage (overridden by --tmpdir).",
-            0, 0, (spank_opt_cb_f) _opt_use_shared_tmpdir },
+            "Create temporary directories on shared storage (overridden by --tmpdir).  Use \"--use-shared-tmpdir=per-node\" to create unique sub-directories for each node allocated to the job (e.g. <base>/job_<jobid>/<nodename>).",
+            2, 0, (spank_opt_cb_f) _opt_use_shared_tmpdir },
 #endif
 
         SPANK_OPTIONS_TABLE_END
@@ -185,7 +203,7 @@ _get_base_tmpdir()
 {
     const char      *path = NULL;
     int             had_initial_error = 0;
-    
+
 #ifdef WITH_SHARED_STORAGE
     if ( base_tmpdir ) {
         path = base_tmpdir;
@@ -211,7 +229,7 @@ retry_test:
         return path;
     }
     slurm_error("auto_tmpdir: no access to temporary directory base path: %s", path);
-    
+
     if ( path == base_tmpdir ) {
 #ifdef WITH_SHARED_STORAGE
         if ( should_create_on_shared ) {
@@ -250,17 +268,43 @@ _sprint_tmpdir(
     size_t          buffer_capacity,
     uint32_t        job_id,
     uint32_t        job_step_id,
+    uint32_t        local_task_id,
+    int             ignore_pernode,
     const char*     *tmpdir_prefix
 )
 {
     size_t          actual_len;
     const char      *tmpdir = _get_base_tmpdir();
-    
+
     if ( tmpdir ) {
+#ifdef WITH_SHARED_STORAGE
+        if ( (tmpdir == shared_tmpdir_prefix) && should_add_pernode_on_shared ) {
+            char    hostname[64];
+            int     i;
+
+            /* 64 characters should be plenty -- DNS label length maxes at 63 */
+            gethostname(hostname, sizeof(hostname));
+            /* Find the first dot (.) and NUL-terminate there (or at the end of the buffer): */
+            i = 0;
+            while ( (i < (sizeof(hostname) - 1)) && hostname[i] && (hostname[i] != '.') ) i++;
+            hostname[i] = '\0';
+
+            if ( ! should_create_per_step_tmpdirs || ((job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT)) ) {
+                if ( ignore_pernode ) {
+                    actual_len = snprintf(buffer, buffer_capacity, job_dir_sprintf_format, tmpdir, job_id);
+                } else {
+                    actual_len = snprintf(buffer, buffer_capacity, pernode_job_dir_sprintf_format, tmpdir, job_id, hostname);
+                }
+            } else {
+                actual_len = snprintf(buffer, buffer_capacity, pernode_job_step_dir_sprintf_format, tmpdir, job_id, hostname, job_step_id, local_task_id);
+            }
+        }
+        else
+#endif
         if ( ! should_create_per_step_tmpdirs || ((job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT)) ) {
             actual_len = snprintf(buffer, buffer_capacity, job_dir_sprintf_format, tmpdir, job_id);
         } else {
-            actual_len = snprintf(buffer, buffer_capacity, job_step_dir_sprintf_format, tmpdir, job_id, job_step_id);
+            actual_len = snprintf(buffer, buffer_capacity, job_step_dir_sprintf_format, tmpdir, job_id, job_step_id, local_task_id);
         }
         if ( (actual_len > 0) && (actual_len < buffer_capacity) ) {
             if ( tmpdir_prefix ) *tmpdir_prefix = tmpdir;
@@ -283,57 +327,61 @@ _mktmpdir(
     char            *outTmpDir,
     size_t          outTmpDirLen,
     uint32_t        job_id,
-    uint32_t        job_step_id
+    uint32_t        job_step_id,
+    uint32_t        local_task_id
 )
 {
     const char      *tmpdir = NULL;
     int             actual_len = 0;
 
     /* Decide which format the directory should use and determine string length: */
-    actual_len = _sprint_tmpdir(outTmpDir, outTmpDirLen, job_id, job_step_id, &tmpdir);
+    actual_len = _sprint_tmpdir(outTmpDir, outTmpDirLen, job_id, job_step_id, local_task_id, 0, &tmpdir);
     if ( ! tmpdir ) return (-1);
 
     /* If that failed then we've got big problems: */
     if ( (actual_len < 0) || (actual_len >= outTmpDirLen) ) {
-        slurm_error("auto_tmpdir: Failure while creating new tmpdir path: %d", actual_len);
+        slurm_error("auto_tmpdir: Failure while creating new tmpdir path: %d >= %d", actual_len, outTmpDirLen);
         return (-1);
     } else {
-        struct stat   finfo;
+        struct stat     finfo;
+        int             stat_rc;
+        int             i;
 
-        /* Build the path, making sure each component exists: */
-        strncpy(outTmpDir, tmpdir, outTmpDirLen);
-        if ( (stat(outTmpDir, &finfo) == 0) && S_ISDIR(finfo.st_mode) ) {
-            /* At the least we'll need the job directory: */
-            actual_len = snprintf(outTmpDir, outTmpDirLen, job_dir_sprintf_format, tmpdir, job_id);
-            if ( stat(outTmpDir, &finfo) != 0 ) {
-                if ( mkdir(outTmpDir, 0700) != 0 ) {
-                    slurm_error("auto_tmpdir: failed creating job tmpdir: %s", outTmpDir);
+        /* _get_base_tmpdir guarantees that the tmpdir exists.  So we need to start at
+         * there:
+         */
+        i = strlen(tmpdir);
+        while ( outTmpDir[i] == '/' ) {
+            /* Yep, a directory under the base tmpdir */
+            outTmpDir[i] = '\0';
+            if ( stat(outTmpDir, &finfo) == 0 ) {
+                /* Ensure it's a directory: */
+                if ( ! S_ISDIR(finfo.st_mode) ) {
+                    slurm_error("auto_tmpdir: tmpdir component is not a directory: %s", outTmpDir);
                     return (-1);
                 }
-                stat(outTmpDir, &finfo);
             }
+            else if ( mkdir(outTmpDir, 0700) != 0 ) {
+                if ( errno != EEXIST ) {
+                    slurm_error("auto_tmpdir: unable to create tmpdir component %s (errno = %d)", outTmpDir, errno);
+                    return (-1);
+                }
+            }
+            /* Okay, that component exists.  Move to the next one: */
+            outTmpDir[i++] = '/';
+            while ( (i < outTmpDirLen) && (outTmpDir[i] != '/') ) i++;
+        }
+
+        /* Now ensure that final directory exists: */
+        if ( stat(outTmpDir, &finfo) == 0 ) {
+            /* Ensure it's a directory: */
             if ( ! S_ISDIR(finfo.st_mode) ) {
-                slurm_error("auto_tmpdir: job tmpdir is not a directory: %s", outTmpDir);
+                slurm_error("auto_tmpdir: tmpdir component is not a directory: %s", outTmpDir);
                 return (-1);
             }
-
-            /* If this isn't the batch/extern portion of a job, worry about the step subdir: */
-            if ( should_create_per_step_tmpdirs && ((job_step_id != SLURM_BATCH_SCRIPT) && (job_step_id != SLURM_EXTERN_CONT)) ) {
-                actual_len = snprintf(outTmpDir, outTmpDirLen, job_step_dir_sprintf_format, tmpdir, job_id, job_step_id);
-                if ( stat(outTmpDir, &finfo) != 0 ) {
-                    if ( mkdir(outTmpDir, 0700) != 0 ) {
-                        slurm_error("auto_tmpdir: failed creating step tmpdir: %s", outTmpDir);
-                        return (-1);
-                    }
-                    stat(outTmpDir, &finfo);
-                }
-                if ( ! S_ISDIR(finfo.st_mode) ) {
-                    slurm_error("auto_tmpdir: step tmpdir is not a directory: %s", outTmpDir);
-                    return (-1);
-                }
-            }
-        } else {
-            slurm_error("auto_tmpdir: base tmpdir is not a directory: %s", tmpdir);
+        }
+        else if ( mkdir(outTmpDir, 0700) != 0 ) {
+            slurm_error("auto_tmpdir: unable to create tmpdir component %s (errno = %d)", outTmpDir, errno);
             return (-1);
         }
     }
@@ -355,7 +403,7 @@ _rmdir_recurse(
 )
 {
     int             rc = 0;
-    
+
     char            *path_argv[2] = { (char*)path, NULL };
 
     // FTS_NOCHDIR  - Avoid changing cwd, which could cause unexpected behavior
@@ -367,7 +415,7 @@ _rmdir_recurse(
     FTSENT          *ftsItem;
 
     if ( ! ftsPtr ) {
-        slurm_error("auto_tmpdir: _rmdir_recurse(): Failed to open file traversal context on %s: %s", path, strerror(errno));
+        slurm_info("auto_tmpdir: _rmdir_recurse(): Failed to open file traversal context on %s: %s", path, strerror(errno));
         return (-1);
     }
 
@@ -379,7 +427,7 @@ _rmdir_recurse(
             case FTS_NS:
             case FTS_DNR:
             case FTS_ERR: {
-                slurm_verbose("auto_tmpdir: _rmdir_recurse(%s): directory does not exist", path);
+                slurm_info("auto_tmpdir: _rmdir_recurse(%s): directory does not exist", path);
                 break;
             }
             case FTS_D: {
@@ -391,7 +439,7 @@ _rmdir_recurse(
                         case FTS_NS:
                         case FTS_DNR:
                         case FTS_ERR:
-                            slurm_error("auto_tmpdir: _rmdir_recurse(): Error in fts_read(%s): %s\n", ftsItem->fts_accpath, strerror(ftsItem->fts_errno));
+                            slurm_info("auto_tmpdir: _rmdir_recurse(): Error in fts_read(%s): %s\n", ftsItem->fts_accpath, strerror(ftsItem->fts_errno));
                             rc = -1;
                             break;
 
@@ -413,7 +461,7 @@ _rmdir_recurse(
                         case FTS_SLNONE:
                         case FTS_DEFAULT:
                             if ( remove(ftsItem->fts_accpath) < 0 ) {
-                                slurm_error("auto_tmpdir: _rmdir_recurse(): Failed to remove %s: %s\n", ftsItem->fts_path, strerror(errno));
+                                slurm_info("auto_tmpdir: _rmdir_recurse(): Failed to remove %s: %s\n", ftsItem->fts_path, strerror(errno));
                                 rc = -1;
                             }
                             break;
@@ -486,11 +534,11 @@ slurm_spank_task_init(
     int           rc = ESPANK_SUCCESS;
     char          tmpdir[PATH_MAX];
     int           tmpdirlen = 0;
-    uint32_t      job_id, job_step_id;
+    uint32_t      job_id, job_step_id, task_id;
     uid_t         jobUid = -1, savedUid = geteuid();
     gid_t         jobGid = -1, savedGid = getegid();
     int           didSetUid = 0, didSetGid = 0;
-            
+
     /* Get the job id and step id: */
     if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
         slurm_error("auto_tmpdir: no job id associated with job??");
@@ -500,8 +548,9 @@ slurm_spank_task_init(
         slurm_error("auto_tmpdir: no step id associated with job %u??", job_id);
         return rc;
     }
-    
-    slurm_verbose("slurm_spank_task_init(%u, %u)", job_id, job_step_id);
+    spank_get_item(spank_ctxt, S_TASK_ID, &task_id);
+
+    slurm_verbose("slurm_spank_task_init(%u, %u, %u)", job_id, job_step_id, task_id);
 
     /* What user should we function as? */
     if ((rc = spank_get_item (spank_ctxt, S_JOB_UID, &jobUid)) != ESPANK_SUCCESS) {
@@ -512,7 +561,7 @@ slurm_spank_task_init(
         slurm_error ("auto_tmpdir: unable to get job's group id");
         return rc;
     }
-            
+
     /* Drop privileges: */
     if ( jobGid != savedGid ) {
         if ( setegid(jobGid) != 0 ) {
@@ -531,13 +580,13 @@ slurm_spank_task_init(
         didSetUid = 1;
         slurm_verbose("auto_tmpdir:  changed to uid %d", jobUid);
     }
-    
-    tmpdirlen = _mktmpdir(tmpdir, sizeof(tmpdir), job_id, job_step_id);
-    
+
+    tmpdirlen = _mktmpdir(tmpdir, sizeof(tmpdir), job_id, job_step_id, task_id);
+
     /* Restore privileges: */
     if ( didSetUid ) seteuid(savedUid);
     if ( didSetGid ) setegid(savedGid);
-    
+
     if ( tmpdirlen > 0 ) {
         if ( (rc = spank_setenv(spank_ctxt, "TMPDIR", tmpdir, tmpdirlen)) != ESPANK_SUCCESS ) {
             slurm_error("setenv(TMPDIR, \"%s\"): %m", tmpdir);
@@ -552,13 +601,14 @@ slurm_spank_task_init(
 /*
  * @function __cleanup_tmpdir
  *
- * Remove each job step's TMPDIR as it exits.
+ * Remove the TMPDIR associated with the tuple (job_id, job_step_id, local_task_id).
  */
 int
 __cleanup_tmpdir(
     spank_t       spank_ctxt,
     uint32_t      job_id,
-    uint32_t      job_step_id
+    uint32_t      job_step_id,
+    uint32_t      local_task_id
 )
 {
     int           rc = ESPANK_SUCCESS;
@@ -577,7 +627,7 @@ __cleanup_tmpdir(
         slurm_error ("auto_tmpdir: __cleanup_tmpdir: unable to get job's group id");
         return rc;
     }
-            
+
     /* Drop privileges: */
     if ( jobGid != savedGid ) {
         if ( setegid(jobGid) != 0 ) {
@@ -596,19 +646,19 @@ __cleanup_tmpdir(
         didSetUid = 1;
         slurm_verbose("auto_tmpdir: __cleanup_tmpdir: changed to uid %d", jobUid);
     }
-    
+
     /* Create the path for this job sub-step: */
-    tmpdirlen = _sprint_tmpdir(tmpdir, sizeof(tmpdir), job_id, job_step_id, NULL);
+    tmpdirlen = _sprint_tmpdir(tmpdir, sizeof(tmpdir), job_id, job_step_id, local_task_id, 1, NULL);
     if ( tmpdirlen > 0 ) {
         /* If we're ignoring sub-step directories, then this can ONLY be deleted when
          * the extern/batch step exits:
          */
         if ( should_create_per_step_tmpdirs || ((job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT)) ) {
             struct stat   finfo;
-            
+
             if ( (stat(tmpdir, &finfo) == 0) && S_ISDIR(finfo.st_mode) ) {
                 if ( _rmdir_recurse(tmpdir) != 0 ) {
-                    slurm_error("auto_tmpdir: __cleanup_tmpdir: Unable to remove TMPDIR at exit (failure in _rmdir_recurse(%s))", tmpdir);
+                    slurm_info("auto_tmpdir: __cleanup_tmpdir: Unable to remove TMPDIR at exit (failure in _rmdir_recurse(%s))", tmpdir);
                     rc = ESPANK_ERROR;
                 } else {
                     slurm_verbose("auto_tmpdir: __cleanup_tmpdir: rm -rf %s", tmpdir);
@@ -618,7 +668,7 @@ __cleanup_tmpdir(
             }
         }
     }
-    
+
     /* Restore privileges: */
     if ( didSetUid ) seteuid(savedUid);
     if ( didSetGid ) setegid(savedGid);
@@ -630,7 +680,16 @@ __cleanup_tmpdir(
 /*
  * @function slurm_spank_task_exit
  *
- * Remove each job step's TMPDIR as it exits.
+ * Remove each job step's TMPDIR as it exits.  TMPDIR is not touched if
+ * this is the batch or extern step.
+ *
+ * Note that if shared storage is being compiled in and the job does NOT
+ * use per-node sub-directories, we cannot remove the job step directory
+ * until all steps on all nodes have exited -- but we can't synchronize
+ * against anything, so we just forego removing the step directories until
+ * the job itself exits.
+ *
+ * (Called as root as each task's process is reaped with wait().)
  */
 int
 slurm_spank_task_exit(
@@ -641,21 +700,26 @@ slurm_spank_task_exit(
 {
     int           rc = ESPANK_SUCCESS;
 
+#ifdef WITH_SHARED_STORAGE
+    if ( should_remove_tmpdir && should_add_pernode_on_shared ) {
+#else
     if ( should_remove_tmpdir ) {
-        uint32_t      job_id, job_step_id;
-                
+#endif
+        uint32_t      job_id, job_step_id, task_id;
+
         /* Get the job id and step id: */
         if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
-            slurm_error("auto_tmpdir: slurm_spank_exit: no job id associated with job??");
+            slurm_error("auto_tmpdir: slurm_spank_task_exit: no job id associated with job??");
             return rc;
         }
         if ( (rc = spank_get_item(spank_ctxt, S_JOB_STEPID, &job_step_id)) != ESPANK_SUCCESS ) {
-            slurm_error("auto_tmpdir: slurm_spank_exit: no step id associated with job %u??", job_id);
+            slurm_error("auto_tmpdir: slurm_spank_task_exit: no step id associated with job %u??", job_id);
             return rc;
         }
-        
-        slurm_verbose("slurm_spank_task_exit(%u, %u)", job_id, job_step_id);
-        if (!((job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT))) rc = __cleanup_tmpdir(spank_ctxt, job_id, job_step_id);
+        spank_get_item(spank_ctxt, S_TASK_ID, &task_id);
+
+        slurm_verbose("slurm_spank_task_exit(%u, %u, %u)", job_id, job_step_id, task_id);
+        if ( (job_step_id != SLURM_BATCH_SCRIPT) && (job_step_id != SLURM_EXTERN_CONT) ) rc = __cleanup_tmpdir(spank_ctxt, job_id, job_step_id, task_id);
     }
     return rc;
 }
@@ -664,9 +728,9 @@ slurm_spank_task_exit(
 /*
  * @function slurm_spank_exit
  *
- * Remove the overall job TMPDIR as it exits.
+ * Remove the job TMPDIR as it exits.
  *
- * (Called as root user after tasks have exited.)
+ * (Called as root user.)
  */
 int
 slurm_spank_exit(
@@ -680,19 +744,19 @@ slurm_spank_exit(
     if ( should_remove_tmpdir ) {
         if ( spank_remote(spank_ctxt) ) {
             uint32_t    job_id, job_step_id;
-                    
+
             /* Get the job id and step id: */
             if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
                 slurm_error("auto_tmpdir: slurm_spank_exit: no job id associated with job??");
                 return rc;
             }
             if ( (rc = spank_get_item(spank_ctxt, S_JOB_STEPID, &job_step_id)) != ESPANK_SUCCESS ) {
-                slurm_error("auto_tmpdir: slurm_spank_exit: no step id associated with job %u??", job_id);
+                slurm_error("auto_tmpdir: slurm_spank_task_exit: no step id associated with job %u??", job_id);
                 return rc;
             }
-            
+
             slurm_verbose("slurm_spank_exit(%u, %u)", job_id, job_step_id);
-            if ((job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT)) rc = __cleanup_tmpdir(spank_ctxt, job_id, job_step_id);
+            if ( (job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT) ) __cleanup_tmpdir(spank_ctxt, job_id, job_step_id, 0);
         }
     }
     return rc;
