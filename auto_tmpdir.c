@@ -140,9 +140,6 @@ static int _opt_use_shared_tmpdir(
     int         remote
 )
 {
-    should_create_on_shared = 1;
-    slurm_verbose("auto_tmpdir:  should create tempororary directories on %s", shared_tmpdir_prefix);
-
     /*
      * Check the optarg to see if "per-node" is being requested:
      */
@@ -154,6 +151,9 @@ static int _opt_use_shared_tmpdir(
             return ESPANK_BAD_ARG;
         }
     }
+
+    should_create_on_shared = 1;
+    slurm_verbose("auto_tmpdir:  will use shared tempororary directory on %s", shared_tmpdir_prefix);
 
     return ESPANK_SUCCESS;
 }
@@ -207,28 +207,34 @@ _get_base_tmpdir()
 #ifdef WITH_SHARED_STORAGE
     if ( base_tmpdir ) {
         path = base_tmpdir;
+        slurm_debug("auto_tmpdir(00): chose base tmpdir %s", path);
     }
     else if ( should_create_on_shared ) {
         path = shared_tmpdir_prefix;
+        slurm_debug("auto_tmpdir(01): chose base tmpdir %s", path);
     }
     else {
         path = default_tmpdir_prefix;
+        slurm_debug("auto_tmpdir(02): chose base tmpdir %s", path);
     }
 #else
     if ( base_tmpdir ) {
         path = base_tmpdir;
+        slurm_debug("auto_tmpdir(03): chose base tmpdir %s", path);
     }
     else {
         path = default_tmpdir_prefix;
+        slurm_debug("auto_tmpdir(04): chose base tmpdir %s", path);
     }
 #endif
 
 retry_test:
     if ( access(path, R_OK|W_OK|X_OK) == 0 ) {
         if ( had_initial_error ) slurm_error("auto_tmpdir: defaulting to temporary directory base path: %s", path);
+        slurm_debug("auto_tmpdir: final base tmpdir %s", path);
         return path;
     }
-    slurm_error("auto_tmpdir: no access to temporary directory base path: %s", path);
+    slurm_error("auto_tmpdir: no access to temporary directory base path (errno = %d): %s", errno, path);
 
     if ( path == base_tmpdir ) {
 #ifdef WITH_SHARED_STORAGE
@@ -506,6 +512,27 @@ slurm_spank_init(
             break;
         }
 
+        case S_CTX_REMOTE: {
+            char            v[PATH_MAX];
+
+            //
+            // Check for our arguments in the environment:
+            //
+            if ( spank_getenv(spank_ctxt, "SLURM_SPANK__SLURM_SPANK_OPTION_auto_tmpdir_no_rm_tmpdir", v, sizeof(v)) == ESPANK_SUCCESS ) {
+                _opt_no_rm_tmpdir(0, v, 1);
+            }
+            if ( spank_getenv(spank_ctxt, "SLURM_SPANK__SLURM_SPANK_OPTION_auto_tmpdir_no_step_tmpdir", v, sizeof(v)) == ESPANK_SUCCESS ) {
+                _opt_no_step_tmpdir(0, v, 1);
+            }
+            if ( spank_getenv(spank_ctxt, "SLURM_SPANK__SLURM_SPANK_OPTION_auto_tmpdir_tmpdir", v, sizeof(v)) == ESPANK_SUCCESS ) {
+                _opt_tmpdir(0, v, 1);
+            }
+            if ( spank_getenv(spank_ctxt, "SLURM_SPANK__SLURM_SPANK_OPTION_auto_tmpdir_use_shared_tmpdir", v, sizeof(v)) == ESPANK_SUCCESS ) {
+                _opt_use_shared_tmpdir(0, v, 1);
+            }
+            break;
+        }
+
     }
     return rc;
 }
@@ -756,7 +783,7 @@ slurm_spank_exit(
             }
 
             slurm_verbose("slurm_spank_exit(%u, %u)", job_id, job_step_id);
-            if ( (job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT) ) __cleanup_tmpdir(spank_ctxt, job_id, job_step_id, 0);
+            if ( (job_step_id == SLURM_BATCH_SCRIPT) || (job_step_id == SLURM_EXTERN_CONT) ) __cleanup_tmpdir(spank_ctxt, job_id, job_step_id, SLURM_BATCH_SCRIPT);
         }
     }
     return rc;
