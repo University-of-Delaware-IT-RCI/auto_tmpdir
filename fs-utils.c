@@ -294,6 +294,8 @@ auto_tmpdir_fs_init(
     }
 #endif
 
+    slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: %u.%u for owner %d:%d", job_id, job_task_id, u_owner, g_owner);
+
     /*
      * First pass through the arguments to the plugin -- pull the local and/or shared prefix if present:
      */
@@ -325,6 +327,10 @@ auto_tmpdir_fs_init(
         }
         i++;
     }
+
+    slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: local_prefix=%s", local_prefix);
+    if ( shared_prefix ) slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: shared_prefix=%s", shared_prefix);
+    if ( tmpdir ) slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: tmpdir=%s", tmpdir);
 
     /*
      * All set:
