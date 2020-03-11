@@ -7,11 +7,10 @@ The plugin accepts the following command-line options to srun/salloc/sbatch:
 ```
       --no-rm-tmpdir          Do not automatically remove temporary directories
                               for the job/steps.
-      --use-shared-tmpdir     Create temporary directories on shared storage
-                              (overridden by --tmpdir).  Use
-                              "--use-shared-tmpdir=per-node" to create unique
-                              sub-directories for each node allocated to the job
-                              (e.g. <base>/job_<jobid>/<nodename>).
+      --use-shared-tmpdir     Create temporary directories on shared storage.
+                              Use "--use-shared-tmpdir=per-node" to create
+                              unique sub-directories for each node allocated to
+                              the job (e.g. <base><job-id>/<nodename>).
 ```
 
 Given a base directory prefix (configured at build, e.g. `/tmp/job-`) the job 8451 would see the directories `/tmp/job-8451` and `/dev/shm/job-8451` created in the prolog.  Optionally, a shared storage path (e.g. a directory on a Lustre filesystem) can be included which users can select via an salloc/srun/sbatch flag.  Each job step will create a new mount namespace and bind-mount `/dev/shm/job-8451` as `/dev/shm`.
