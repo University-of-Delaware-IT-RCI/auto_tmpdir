@@ -210,12 +210,17 @@ force_chown:
     /*
      * Create the bind mount record:
      */
-    fs_info->bind_mounts = auto_tmpdir_fs_bindpoint_alloc(bind_this_path, to_this_path, should_always_remove);
-    if ( ! fs_info->bind_mounts ) {
+    auto_tmpdir_fs_bindpoint_t      bindpoint = auto_tmpdir_fs_bindpoint_alloc(bind_this_path, to_this_path, should_always_remove);
+
+    if ( ! bindpoint ) {
         slurm_error("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: unable to create bind mount record for `%s`", bind_this_path);
         auto_tmpdir_rmdir_recurse(bind_this_path, 0);
         return -1;
     }
+
+    bindpoint->link = fs_info->bind_mounts;
+    fs_info->bind_mounts = bindpoint;
+
     return 0;
 }
 
@@ -558,8 +563,8 @@ auto_tmpdir_mkdir_recurse(
     }
     if ( stat(path, &finfo) != 0 ) {
         /* There's at least one directory we need to create: */
-        size_t      path_len = strlen(path) + 1;
-        char        local_path[path_len];
+        size_t      path_len = strlen(path);
+        char        local_path[path_len + 1];
         int         i = 1;
 
         local_path[0] = path[0];
