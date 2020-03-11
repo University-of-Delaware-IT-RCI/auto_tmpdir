@@ -13,11 +13,6 @@
 SPANK_PLUGIN(auto_tmpdir, 1)
 
 /*
- * Filesystem config:
- */
-static auto_tmpdir_fs_ref           auto_tmpdir_fs_info = NULL;
-
-/*
  * Options bit vector:
  */
 static auto_tmpdir_fs_options_t     auto_tmpdir_options = 0;
@@ -159,8 +154,10 @@ slurm_spank_job_prolog(
 {
     /* We only want to run in the remote context: */
     if ( spank_remote(spank_ctxt) ) {
-        auto_tmpdir_fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
-        if ( ! auto_tmpdir_fs_info ) return ESPANK_ERROR;
+        auto_tmpdir_fs_ref  fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
+
+        if ( ! fs_info ) return ESPANK_ERROR;
+        auto_tmpdir_fs_fini(fs_info, 1);
     }
     return ESPANK_SUCCESS;
 }
@@ -181,24 +178,15 @@ slurm_spank_init_post_opt(
 
     /* We only want to run in the remote context: */
     if ( spank_remote(spank_ctxt) ) {
-        if ( ! auto_tmpdir_fs_info ) {
-            auto_tmpdir_fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
-            if ( ! auto_tmpdir_fs_info ) rc = ESPANK_ERROR;
-        }
-        if ( rc == ESPANK_SUCCESS ) {
-            if ( auto_tmpdir_fs_bind_mount(auto_tmpdir_fs_info) == 0 ) {
-                if ( (rc = spank_setenv(spank_ctxt, "TMPDIR", "/tmp", 4)) != ESPANK_SUCCESS ) {
-                    slurm_error("auto_tmpdir::slurm_spank_init_post_opt: setenv(TMPDIR, \"/tmp\") failed (%m)");
-                    auto_tmpdir_fs_fini(auto_tmpdir_fs_info, 0);
-                    auto_tmpdir_fs_info = NULL;
-                    rc = ESPANK_ERROR;
-                }
-            } else {
-                auto_tmpdir_fs_fini(auto_tmpdir_fs_info, 0);
-                auto_tmpdir_fs_info = NULL;
-                rc = ESPANK_ERROR;
+        auto_tmpdir_fs_ref  fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
+
+        rc = ESPANK_ERROR;
+        if ( fs_info && (auto_tmpdir_fs_bind_mount(fs_info) == 0) ) {
+            if ( (rc = spank_setenv(spank_ctxt, "TMPDIR", auto_tmpdir_fs_get_tmpdir(fs_info), 4)) != ESPANK_SUCCESS ) {
+                slurm_error("auto_tmpdir::slurm_spank_init_post_opt: setenv(TMPDIR, \"/tmp\") failed (%m)");
             }
         }
+        auto_tmpdir_fs_fini(fs_info, 1);
     }
     return rc;
 }
@@ -216,14 +204,12 @@ slurm_spank_job_epilog(
     char            *argv[]
 )
 {
-    int             rc = ESPANK_SUCCESS;
-
     /* We only want to run in the remote context: */
     if ( spank_remote(spank_ctxt) ) {
-        if ( auto_tmpdir_fs_info ) {
-            if ( auto_tmpdir_fs_fini(auto_tmpdir_fs_info, 0) != 0 ) rc = ESPANK_ERROR;
-            auto_tmpdir_fs_info = NULL;
-        }
+        auto_tmpdir_fs_ref  fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
+
+        if ( ! fs_info ) return ESPANK_ERROR;
+        auto_tmpdir_fs_fini(fs_info, 0);
     }
-    return rc;
+    return ESPANK_SUCCESS;
 }

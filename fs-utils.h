@@ -26,6 +26,7 @@ typedef struct auto_tmpdir_fs * auto_tmpdir_fs_ref;
 
 auto_tmpdir_fs_ref auto_tmpdir_fs_init(spank_t spank_ctxt, int argc, char* argv[], auto_tmpdir_fs_options_t options);
 int auto_tmpdir_fs_bind_mount(auto_tmpdir_fs_ref fs_info);
+const char* auto_tmpdir_fs_get_tmpdir(auto_tmpdir_fs_ref fs_info);
 int auto_tmpdir_fs_fini(auto_tmpdir_fs_ref fs_info, int should_not_remove_bindpoints);
 
 /**/

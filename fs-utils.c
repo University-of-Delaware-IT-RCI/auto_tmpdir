@@ -86,6 +86,7 @@ auto_tmpdir_fs_bindpoint_dealloc(
 
 typedef struct auto_tmpdir_fs {
     auto_tmpdir_fs_options_t    options;
+    const char                  *tmpdir;
     const char                  *base_dir;
     auto_tmpdir_fs_bindpoint_t  *bind_mounts;
 } auto_tmpdir_fs;
@@ -250,6 +251,7 @@ auto_tmpdir_fs_init(
     uid_t                       u_owner;
     gid_t                       g_owner;
     const char                  *local_prefix = auto_tmpdir_fs_default_local_prefix, *shared_prefix = auto_tmpdir_fs_default_shared_prefix;
+    const char                  *tmpdir = NULL;
     int                         rc;
     size_t                      prefix_len;
 
@@ -306,7 +308,14 @@ auto_tmpdir_fs_init(
         else if ( strncmp(argv[i], "shared_prefix=", 14) == 0 ) {
             shared_prefix = argv[i] + 14;
             if ( *shared_prefix != '/' ) {
-                slurm_error("auto_tmpdir::auto_tmpdir_fs_init: invalid local_prefix in plugstack configuration (%s)", shared_prefix);
+                slurm_error("auto_tmpdir::auto_tmpdir_fs_init: invalid shared_prefix in plugstack configuration (%s)", shared_prefix);
+                return NULL;
+            }
+        }
+        else if ( strncmp(argv[i], "tmpdir=", 7) == 0 ) {
+            tmpdir = argv[i] + 7;
+            if ( *tmpdir != '/' ) {
+                slurm_error("auto_tmpdir::auto_tmpdir_fs_init: invalid tmpdir in plugstack configuration (%s)", tmpdir);
                 return NULL;
             }
         }
@@ -321,6 +330,7 @@ auto_tmpdir_fs_init(
      */
     if ( (new_fs = (auto_tmpdir_fs*)malloc(sizeof(auto_tmpdir_fs))) ) {
         new_fs->options = options;
+        new_fs->tmpdir = tmpdir ? strdup(tmpdir) : NULL;
         new_fs->base_dir = NULL;
         new_fs->bind_mounts = NULL;
 
@@ -454,6 +464,7 @@ error_out:
             if ( (new_fs->options & auto_tmpdir_fs_options_should_not_delete) != auto_tmpdir_fs_options_should_not_delete ) auto_tmpdir_rmdir_recurse(new_fs->base_dir, 0);
             free((void*)new_fs->base_dir);
         }
+        if ( new_fs->tmpdir ) free((void*)new_fs->tmpdir);
         free((void*)new_fs);
     }
     return NULL;
@@ -513,6 +524,15 @@ auto_tmpdir_fs_bind_mount(
 }
 
 
+const char*
+auto_tmpdir_fs_get_tmpdir(
+    auto_tmpdir_fs_ref  fs_info
+)
+{
+    return fs_info->tmpdir ? fs_info->tmpdir : "/tmp";
+}
+
+
 int
 auto_tmpdir_fs_fini(
     auto_tmpdir_fs_ref  fs_info,
@@ -537,6 +557,7 @@ auto_tmpdir_fs_fini(
             }
             free((void*)fs_info->base_dir);
         }
+        if ( fs_info->tmpdir ) free((void*)fs_info->tmpdir);
         free((void*)fs_info);
     }
     return rc;

@@ -16,7 +16,7 @@ The plugin accepts the following command-line options to srun/salloc/sbatch:
 
 Given a base directory prefix (configured at build, e.g. `/tmp/job-`) the job 8451 would see the directories `/tmp/job-8451` and `/dev/shm/job-8451` created in the prolog.  Optionally, a shared storage path (e.g. a directory on a Lustre filesystem) can be included which users can select via an salloc/srun/sbatch flag.  Each job step will create a new mount namespace and bind-mount `/dev/shm/job-8451` as `/dev/shm`.
 
-The `TMPDIR` environment variable is always set to `/tmp` by this plugin.  An arbitrary number of additional paths (typically `/tmp`, often additionally `/var/tmp`) will have directories created under `/dev/shm/job-8451` (e.g. `/dev/shm/job-8451/tmp` and `/dev/shm/job-8451/var_tmp`) to be bind-mounted in the job step.  The paths are configured in the Slurm `plugstack.conf` record for this plugin:
+An arbitrary number of additional paths (typically `/tmp`, often additionally `/var/tmp`) will have directories created under `/dev/shm/job-8451` (e.g. `/dev/shm/job-8451/tmp` and `/dev/shm/job-8451/var_tmp`) to be bind-mounted in the job step.  The paths are configured in the Slurm `plugstack.conf` record for this plugin:
 
 ```
 #
@@ -25,6 +25,12 @@ The `TMPDIR` environment variable is always set to `/tmp` by this plugin.  An ar
 # req/opt   plugin                  arguments
 # ~~~~~~~   ~~~~~~~~~~~~~~~~~~~~~~  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 required    auto_tmpdir.so          mount=/tmp mount=/var/tmp
+```
+
+The `TMPDIR` environment variable is set to `/tmp` by default by this plugin.  The value of `TMPDIR` can be overridden in the plugin configuration:
+
+```
+required    auto_tmpdir.so          mount=/tmp mount=/var/tmp tmpdir=/var/tmp
 ```
 
 The compiled-in local- and shared-directory prefixes can also be overridden in the plugin configuration using the `local_prefix` or `shared_prefix` directives:
