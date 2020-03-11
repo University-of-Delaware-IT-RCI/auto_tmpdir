@@ -553,7 +553,7 @@ auto_tmpdir_fs_fini(
             if ( local_rc != 0 ) rc = local_rc;
         }
         if ( fs_info->base_dir ) {
-            if ( (fs_info->options & auto_tmpdir_fs_options_should_not_delete) != auto_tmpdir_fs_options_should_not_delete ) {
+            if ( ! should_dealloc_only && (fs_info->options & auto_tmpdir_fs_options_should_not_delete) != auto_tmpdir_fs_options_should_not_delete ) {
                 int local_rc = auto_tmpdir_rmdir_recurse(fs_info->base_dir, 0);
 
                 if ( local_rc != 0 ) rc = local_rc;
