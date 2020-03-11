@@ -157,8 +157,11 @@ slurm_spank_job_prolog(
     char            *argv[]
 )
 {
-    auto_tmpdir_fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
-    if ( ! auto_tmpdir_fs_info ) return ESPANK_ERROR;
+    /* We only want to run in the remote context: */
+    if ( spank_remote(spank_ctxt) ) {
+        auto_tmpdir_fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
+        if ( ! auto_tmpdir_fs_info ) return ESPANK_ERROR;
+    }
     return ESPANK_SUCCESS;
 }
 
@@ -176,7 +179,7 @@ slurm_spank_init_post_opt(
 {
     int             rc = ESPANK_SUCCESS;
 
-    /* We only want to run in the remove context: */
+    /* We only want to run in the remote context: */
     if ( spank_remote(spank_ctxt) ) {
         if ( ! auto_tmpdir_fs_info ) {
             auto_tmpdir_fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
@@ -215,9 +218,12 @@ slurm_spank_job_epilog(
 {
     int             rc = ESPANK_SUCCESS;
 
-    if ( auto_tmpdir_fs_info ) {
-        if ( auto_tmpdir_fs_fini(auto_tmpdir_fs_info, 0) != 0 ) rc = ESPANK_ERROR;
-        auto_tmpdir_fs_info = NULL;
+    /* We only want to run in the remote context: */
+    if ( spank_remote(spank_ctxt) ) {
+        if ( auto_tmpdir_fs_info ) {
+            if ( auto_tmpdir_fs_fini(auto_tmpdir_fs_info, 0) != 0 ) rc = ESPANK_ERROR;
+            auto_tmpdir_fs_info = NULL;
+        }
     }
     return rc;
 }

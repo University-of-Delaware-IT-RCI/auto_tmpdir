@@ -142,9 +142,9 @@ __auto_tmpdir_fs_path_create(
         return NULL;
     }
     if ( has_hostname ) {
-        snprintf(out_path, out_path_len, (has_task ? "%1$s%2$u.%3$u" : "%1$s%2$u"), prefix, job_id, job_task_id);
+        snprintf(out_path, out_path_len, (has_task ? "%1$s%2$u.%4$u/%3$s" : "%1$s%2$u/%3$s"), prefix, job_id, hostname, job_task_id);
     } else {
-        snprintf(out_path, out_path_len, (has_task ? "%1$s%2$u.%4$u/%3$s" : "%1$s%2$/%3$s"), prefix, job_id, hostname, job_task_id);
+        snprintf(out_path, out_path_len, (has_task ? "%1$s%2$u.%3$u" : "%1$s%2$u"), prefix, job_id, job_task_id);
     }
     return out_path;
 }
