@@ -210,7 +210,7 @@ force_chown:
     /*
      * Create the bind mount record:
      */
-    auto_tmpdir_fs_bindpoint_t      bindpoint = auto_tmpdir_fs_bindpoint_alloc(bind_this_path, to_this_path, should_always_remove);
+    auto_tmpdir_fs_bindpoint_t      *bindpoint = auto_tmpdir_fs_bindpoint_alloc(bind_this_path, to_this_path, should_always_remove);
 
     if ( ! bindpoint ) {
         slurm_error("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: unable to create bind mount record for `%s`", bind_this_path);
