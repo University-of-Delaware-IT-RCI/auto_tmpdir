@@ -175,6 +175,7 @@ force_mkdir:
             slurm_error("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: unable to create directory `%s` (%m)", bind_this_path);
             return -1;
         }
+        slurm_debug("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: created directory `%s`", bind_this_path);
 
         /*
          * Fixup ownership:
@@ -185,6 +186,7 @@ force_chown:
             auto_tmpdir_rmdir_recurse(bind_this_path, 0);
             return -1;
         }
+        slurm_debug("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: set ownership %d:%d on directory `%s`", u_owner, g_owner, bind_this_path);
     } else if ( ! S_ISDIR(finfo.st_mode) ) {
         slurm_warning("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: path `%s` exists but is not a directory", bind_this_path);
 
@@ -217,6 +219,7 @@ force_chown:
         auto_tmpdir_rmdir_recurse(bind_this_path, 0);
         return -1;
     }
+    slurm_debug("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: added bindpoint `%s` -> `%s`", bind_this_path, to_this_path);
 
     bindpoint->link = fs_info->bind_mounts;
     fs_info->bind_mounts = bindpoint;
