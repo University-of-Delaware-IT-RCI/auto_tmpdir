@@ -48,7 +48,8 @@ auto_tmpdir_fs_bindpoint_alloc(
 int
 auto_tmpdir_fs_bindpoint_dealloc(
     auto_tmpdir_fs_bindpoint_t  *bindpoint,
-    int                         should_not_delete
+    int                         should_not_delete,
+    int                         should_dealloc_only
 )
 {
     int             rc = 0;
@@ -63,12 +64,12 @@ auto_tmpdir_fs_bindpoint_dealloc(
                 rc = -1;
                 is_okay = 0;
                 /*  Attempt to remove the bound path itself to drop all content: */
-                if ( bindpoint->should_always_remove || ! should_not_delete ) auto_tmpdir_rmdir_recurse(bindpoint->to_this_path, 1);
+                if ( ! should_dealloc_only && (bindpoint->should_always_remove || ! should_not_delete) ) auto_tmpdir_rmdir_recurse(bindpoint->to_this_path, 1);
             }
         }
         if ( is_okay ) {
             /* Remove the directory being bind mounted: */
-            if ( (bindpoint->should_always_remove || ! should_not_delete) && auto_tmpdir_rmdir_recurse(bindpoint->bind_this_path, 0) != 0 ) {
+            if ( ! should_dealloc_only && ((bindpoint->should_always_remove || ! should_not_delete) && (auto_tmpdir_rmdir_recurse(bindpoint->bind_this_path, 0) != 0)) ) {
                 rc = -1;
             }
         }
@@ -457,7 +458,8 @@ error_out:
         if ( new_fs->bind_mounts ) {
             auto_tmpdir_fs_bindpoint_dealloc(
                     new_fs->bind_mounts,
-                    ((new_fs->options & auto_tmpdir_fs_options_should_not_delete) == auto_tmpdir_fs_options_should_not_delete)
+                    ((new_fs->options & auto_tmpdir_fs_options_should_not_delete) == auto_tmpdir_fs_options_should_not_delete),
+                    0
                 );
         }
         if ( new_fs->base_dir ) {
@@ -509,7 +511,7 @@ auto_tmpdir_fs_bind_mount(
 	     */
 	    while ( (rc == 0) && bindpoint ) {
 	        if ( ! bindpoint->is_bind_mounted ) {
-	            slurm_debug("auto_tmpdir::auto_tmpdir_fs_bind_mount: bind-mounting `%s` -> `%s`", bindpoint->bind_this_path, bindpoint->to_this_path);
+	            slurm_debug("auto_tmpdir::auto_tmpdir_fs_bind_mount: bind-mounting `%s` -> `%s` (pid %d)", bindpoint->bind_this_path, bindpoint->to_this_path, getpid());
 	            if ( mount(bindpoint->bind_this_path, bindpoint->to_this_path, "none", MS_BIND, NULL) != 0 ) {
 	                slurm_error("auto_tmpdir::auto_tmpdir_fs_bind_mount: failed to bind-mount `%s` -> `%s` (%m)", bindpoint->bind_this_path, bindpoint->to_this_path);
 	                rc = -1;
@@ -536,7 +538,7 @@ auto_tmpdir_fs_get_tmpdir(
 int
 auto_tmpdir_fs_fini(
     auto_tmpdir_fs_ref  fs_info,
-     int                should_not_remove_bindpoints
+     int                should_dealloc_only
 )
 {
     int     rc = 0;
@@ -545,12 +547,13 @@ auto_tmpdir_fs_fini(
         if ( fs_info->bind_mounts ) {
             int     local_rc = auto_tmpdir_fs_bindpoint_dealloc(
                                         fs_info->bind_mounts,
-                                        (should_not_remove_bindpoints || ((fs_info->options & auto_tmpdir_fs_options_should_not_delete) == auto_tmpdir_fs_options_should_not_delete))
+                                        ((fs_info->options & auto_tmpdir_fs_options_should_not_delete) == auto_tmpdir_fs_options_should_not_delete),
+                                        should_dealloc_only
                                     );
             if ( local_rc != 0 ) rc = local_rc;
         }
         if ( fs_info->base_dir ) {
-            if ( ! should_not_remove_bindpoints && ((fs_info->options & auto_tmpdir_fs_options_should_not_delete) != auto_tmpdir_fs_options_should_not_delete) ) {
+            if ( (fs_info->options & auto_tmpdir_fs_options_should_not_delete) != auto_tmpdir_fs_options_should_not_delete ) {
                 int local_rc = auto_tmpdir_rmdir_recurse(fs_info->base_dir, 0);
 
                 if ( local_rc != 0 ) rc = local_rc;
