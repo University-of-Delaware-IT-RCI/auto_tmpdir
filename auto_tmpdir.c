@@ -18,6 +18,16 @@ SPANK_PLUGIN(auto_tmpdir, 1)
 static auto_tmpdir_fs_options_t     auto_tmpdir_options = 0;
 
 /*
+ * Filesystem bind mount info:
+ */
+static auto_tmpdir_fs_ref           auto_tmpdir_fs_info = NULL;
+
+/*
+ * Which job step should cleanup?
+ */
+static uint32_t                     auto_tmpdir_cleanup_in_step = SLURM_EXTERN_CONT;
+
+/*
  * @function _opt_no_rm_tmpdir
  *
  * Parse the --no-rm-tmpdir option.
@@ -141,29 +151,6 @@ slurm_spank_init(
 
 
 /*
- * @function slurm_spank_job_prolog
- *
- * Create the job's temporary directory and any bind mountpoints.
- */
-int
-slurm_spank_job_prolog(
-    spank_t         spank_ctxt,
-    int             argc,
-    char            *argv[]
-)
-{
-    /* We only want to run in the remote context: */
-    if ( spank_remote(spank_ctxt) ) {
-        auto_tmpdir_fs_ref  fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
-
-        if ( ! fs_info ) return ESPANK_ERROR;
-        auto_tmpdir_fs_fini(fs_info, 1);
-    }
-    return ESPANK_SUCCESS;
-}
-
-
-/*
  * @function slurm_spank_init_post_opt
  *
  */
@@ -178,38 +165,43 @@ slurm_spank_init_post_opt(
 
     /* We only want to run in the remote context: */
     if ( spank_remote(spank_ctxt) ) {
-        auto_tmpdir_fs_ref  fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
+        auto_tmpdir_fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
 
         rc = ESPANK_ERROR;
-        if ( fs_info && (auto_tmpdir_fs_bind_mount(fs_info) == 0) ) {
-            if ( (rc = spank_setenv(spank_ctxt, "TMPDIR", auto_tmpdir_fs_get_tmpdir(fs_info), 4)) != ESPANK_SUCCESS ) {
+        if ( auto_tmpdir_fs_info && (auto_tmpdir_fs_bind_mount(auto_tmpdir_fs_info) == 0) ) {
+            const char      *tmpdir = auto_tmpdir_fs_get_tmpdir(auto_tmpdir_fs_info);
+
+            if ( ! tmpdir || ((rc = spank_setenv(spank_ctxt, "TMPDIR", tmpdir, strlen(tmpdir))) != ESPANK_SUCCESS) ) {
                 slurm_error("auto_tmpdir::slurm_spank_init_post_opt: setenv(TMPDIR, \"/tmp\") failed (%m)");
             }
         }
-        auto_tmpdir_fs_fini(fs_info, 1);
     }
     return rc;
 }
 
 
 /*
- * @function slurm_spank_job_epilog
+ * @function slurm_spank_exit
  *
  * Remove the job's temporary directory and any bind mountpoints.
  */
 int
-slurm_spank_job_epilog(
+slurm_spank_exit(
     spank_t         spank_ctxt,
     int             argc,
     char            *argv[]
 )
 {
-    /* We only want to run in the remote context: */
-    if ( spank_remote(spank_ctxt) ) {
-        auto_tmpdir_fs_ref  fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
+    if ( spank_remote(spank_ctxt) && auto_tmpdir_fs_info ) {
+        uint32_t    job_step_id;
+        int         rc;
 
-        if ( ! fs_info ) return ESPANK_ERROR;
-        auto_tmpdir_fs_fini(fs_info, 0);
+        if ( (rc = spank_get_item(spank_ctxt, S_JOB_STEPID, &job_step_id)) != ESPANK_SUCCESS ) {
+            slurm_error("auto_tmpdir::slurm_spank_exit: no step id associated with job??");
+            return rc;
+        }
+        slurm_debug("auto_tmpdir::slurm_spank_exit: checking for cleanup, step %u == %u", job_step_id, auto_tmpdir_cleanup_in_step);
+        if ( (job_step_id == auto_tmpdir_cleanup_in_step) && (auto_tmpdir_fs_fini(auto_tmpdir_fs_info, 0) != 0) ) return ESPANK_ERROR;
     }
     return ESPANK_SUCCESS;
 }

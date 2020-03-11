@@ -45,6 +45,22 @@ The creation and bind-mount of `/dev/shm` can also be disabled:
 required    auto_tmpdir.so          mount=/tmp mount=/var/tmp no_dev_shm
 ```
 
+## Order of mount= options
+
+Please note that the *order* of the `mount=` options can be significant:
+
+1. The mount points are constructed in the order they appear
+2. The mount points are bind-mounted in the **reverse** of the order they appear
+3. The mount points are unmounted and removed in the order they appear
+
+Using the following configuration
+
+```
+required    auto_tmpdir.so          mount=/var/tmp mount=/tmp
+```
+
+for job 8451 would have `/tmp/job-8451/tmp` bind-mounted at `/tmp` first; trying to bind mount `/tmp/job-8451/var_tmp` will subsequently fail because it's at that point referencing the directory `/tmp/job-8451/tmp/job-8451/var_tmp`.  In practice, if the directory in which you're creating the job's temporary directory of bind-mountpoints will be masked by a bind mount inside the job, make sure it is the first `mount=` option you present.
+
 ## Operation
 
 Assume the configuation:

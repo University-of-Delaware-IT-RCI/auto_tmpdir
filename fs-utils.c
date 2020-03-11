@@ -16,7 +16,7 @@
 /**/
 
 typedef struct auto_tmpdir_fs_bindpoint {
-    struct auto_tmpdir_fs_bindpoint *link;
+    struct auto_tmpdir_fs_bindpoint *link, *back_link;
     int                 is_bind_mounted, should_always_remove;
     const char          *bind_this_path;
     const char          *to_this_path;
@@ -34,7 +34,7 @@ auto_tmpdir_fs_bindpoint_alloc(
     auto_tmpdir_fs_bindpoint_t  *new_rec = (auto_tmpdir_fs_bindpoint_t*)malloc(sizeof(auto_tmpdir_fs_bindpoint_t));
 
     if ( new_rec ) {
-        new_rec->link = NULL;
+        new_rec->link = new_rec->back_link = NULL;
         new_rec->is_bind_mounted = 0;
         new_rec->should_always_remove = should_always_remove;
         new_rec->bind_this_path = bind_this_path;
@@ -58,19 +58,30 @@ auto_tmpdir_fs_bindpoint_dealloc(
         auto_tmpdir_fs_bindpoint_t  *next = bindpoint->link;
         int                         is_okay = 1;
 
+        slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: `%s` -> `%s` (%d|%d)", bindpoint->to_this_path, bindpoint->bind_this_path, bindpoint->is_bind_mounted, bindpoint->should_always_remove);
         if ( bindpoint->is_bind_mounted ) {
-            if ( umount2(bindpoint->to_this_path, MNT_DETACH) != 0 ) {
-                slurm_info("auto_tmpdir: unable to unmount bind point %s -> %s", bindpoint->to_this_path, bindpoint->bind_this_path);
+            if ( umount2(bindpoint->to_this_path, MNT_FORCE) != 0 ) {
+                slurm_warning("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: unable to unmount bind point `%s` -> `%s`", bindpoint->to_this_path, bindpoint->bind_this_path);
                 rc = -1;
                 is_okay = 0;
                 /*  Attempt to remove the bound path itself to drop all content: */
-                if ( ! should_dealloc_only && (bindpoint->should_always_remove || ! should_not_delete) ) auto_tmpdir_rmdir_recurse(bindpoint->to_this_path, 1);
+                if ( ! should_dealloc_only && (bindpoint->should_always_remove || ! should_not_delete) ) {
+                    slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: failed to unmount, removing content of directory `%s`", bindpoint->to_this_path);
+                    auto_tmpdir_rmdir_recurse(bindpoint->to_this_path, 1);
+                }
             }
         }
         if ( is_okay ) {
             /* Remove the directory being bind mounted: */
-            if ( ! should_dealloc_only && ((bindpoint->should_always_remove || ! should_not_delete) && (auto_tmpdir_rmdir_recurse(bindpoint->bind_this_path, 0) != 0)) ) {
-                rc = -1;
+            if ( ! should_dealloc_only && ((bindpoint->should_always_remove || ! should_not_delete)) ) {
+                struct stat         finfo;
+
+                if ( stat(bindpoint->bind_this_path, &finfo) == 0 ) {
+                    slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: removing directory `%s`", bindpoint->bind_this_path);
+                    if ( auto_tmpdir_rmdir_recurse(bindpoint->bind_this_path, 0) != 0 ) rc = -1;
+                } else {
+                    slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: directory `%s` no longer exists", bindpoint->bind_this_path);
+                }
             }
         }
         /* Deallocate this node: */
@@ -89,7 +100,7 @@ typedef struct auto_tmpdir_fs {
     auto_tmpdir_fs_options_t    options;
     const char                  *tmpdir;
     const char                  *base_dir;
-    auto_tmpdir_fs_bindpoint_t  *bind_mounts;
+    auto_tmpdir_fs_bindpoint_t  *bind_mounts, *bind_mounts_tail;
 } auto_tmpdir_fs;
 
 /**/
@@ -223,9 +234,13 @@ force_chown:
     }
     slurm_debug("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: added bindpoint `%s` -> `%s`", bind_this_path, to_this_path);
 
-    bindpoint->link = fs_info->bind_mounts;
-    fs_info->bind_mounts = bindpoint;
-
+    if ( fs_info->bind_mounts_tail ) {
+        fs_info->bind_mounts_tail->link = bindpoint;
+        bindpoint->back_link = fs_info->bind_mounts_tail;
+        fs_info->bind_mounts_tail = bindpoint;
+    } else {
+        fs_info->bind_mounts = fs_info->bind_mounts_tail = bindpoint;
+    }
     return 0;
 }
 
@@ -339,7 +354,7 @@ auto_tmpdir_fs_init(
         new_fs->options = options;
         new_fs->tmpdir = tmpdir ? strdup(tmpdir) : NULL;
         new_fs->base_dir = NULL;
-        new_fs->bind_mounts = NULL;
+        new_fs->bind_mounts = new_fs->bind_mounts_tail = NULL;
 
         /*
          * Attempt to setup a mapped /dev/shm if desired:
@@ -489,6 +504,11 @@ auto_tmpdir_fs_bind_mount(
 
     if ( bindpoint ) {
         /*
+         * Skip ahead to the end, then go in reverse order:
+         */
+        while ( bindpoint->link ) bindpoint = bindpoint->link;
+
+        /*
          * Allow mount points to be shared into a child namespace:
          */
         if ( mount("", "/", "dontcare", MS_REC | MS_SHARED, "") != 0 ) {
@@ -525,7 +545,7 @@ auto_tmpdir_fs_bind_mount(
 	                bindpoint->is_bind_mounted = 1;
 	            }
 	        }
-	        bindpoint = bindpoint->link;
+	        bindpoint = bindpoint->back_link;
 	    }
 	}
 	return rc;
@@ -560,8 +580,10 @@ auto_tmpdir_fs_fini(
         }
         if ( fs_info->base_dir ) {
             if ( ! should_dealloc_only && (fs_info->options & auto_tmpdir_fs_options_should_not_delete) != auto_tmpdir_fs_options_should_not_delete ) {
-                int local_rc = auto_tmpdir_rmdir_recurse(fs_info->base_dir, 0);
+                int local_rc;
 
+                slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: removing directory `%s`", fs_info->base_dir);
+                local_rc = auto_tmpdir_rmdir_recurse(fs_info->base_dir, 0);
                 if ( local_rc != 0 ) rc = local_rc;
             }
             free((void*)fs_info->base_dir);
