@@ -5,9 +5,6 @@ Slurm SPANK plugin for automated handling of temporary directories for jobs.
 The plugin accepts the following command-line options to srun/salloc/sbatch:
 
 ```
-      --tmpdir=<path>         Use the given path as the base directory for
-                              temporary files.
-      --no-step-tmpdir        Do not create per-step sub-directories.
       --no-rm-tmpdir          Do not automatically remove temporary directories
                               for the job/steps.
       --use-shared-tmpdir     Create temporary directories on shared storage
@@ -17,10 +14,52 @@ The plugin accepts the following command-line options to srun/salloc/sbatch:
                               (e.g. <base>/job_<jobid>/<nodename>).
 ```
 
-Given a base directory `/tmp` the job 8451 would see the directory `/tmp/job_8451` created.  For batch jobs, the batch step will see `/tmp/job_8451` as `$TMPDIR`.  By default, each job step would have a unique directory created, e.g. the first job step that is `srun` would have a `$TMPDIR` of `/tmp/job_8451/step_0`.
+Given a base directory prefix (configured at build, e.g. `/tmp/job-`) the job 8451 would see the directories `/tmp/job-8451` and `/dev/shm/job-8451` created in the prolog.  Optionally, a shared storage path (e.g. a directory on a Lustre filesystem) can be included which users can select via an salloc/srun/sbatch flag.  Each job step will create a new mount namespace and bind-mount `/dev/shm/job-8451` as `/dev/shm`.
 
-The `--no-step-tmpdir` option forces all job steps to use the batch `$TMPDIR` (in this example, `/tmp/job_8451`).
+The `TMPDIR` environment variable is always set to `/tmp` by this plugin.  An arbitrary number of additional paths (typically `/tmp`, often additionally `/var/tmp`) will have directories created under `/dev/shm/job-8451` (e.g. `/dev/shm/job-8451/tmp` and `/dev/shm/job-8451/var_tmp`) to be bind-mounted in the job step.  The paths are configured in the Slurm `plugstack.conf` record for this plugin:
 
-By default, when a job step completes its per-step temporary sub-directory is removed from the filesystem; when the batch job completes the job temporary directory (`/tmp/job_8451`) is removed.  The temporary directories/files can be left behind using the `--no-rm-tmpdir` option.
+```
+#
+# SLURM plugin stack configuration
+#
+# req/opt   plugin                  arguments
+# ~~~~~~~   ~~~~~~~~~~~~~~~~~~~~~~  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+required    auto_tmpdir.so          mount=/tmp mount=/var/tmp
+```
 
-The `--use-shared-tmpdir` option changes the default base directory from `/tmp` to a shared scratch storage path configured at build time (e.g. on a Lustre file system).  Using the optional `per-node` value for this option alters the directory naming to include the short hostname as a directory component, e.g. `<base>/job_8451/n000/step_0`.
+The compiled-in local- and shared-directory prefixes can also be overridden in the plugin configuration using the `local_prefix` or `shared_prefix` directives:
+
+```
+required    auto_tmpdir.so          mount=/tmp mount=/var/tmp local_prefix=/tmp/slurm- shared_prefix=/scratch/slurm/job-
+```
+
+The creation and bind-mount of `/dev/shm` can also be disabled:
+
+```
+required    auto_tmpdir.so          mount=/tmp mount=/var/tmp no_dev_shm
+```
+
+## Operation
+
+Assume the configuation:
+
+```
+required    auto_tmpdir.so          mount=/tmp mount=/var/tmp local_prefix=/tmp/slurm- shared_prefix=/scratch/slurm/job-
+```
+
+In the prolog stage for job 8451, each participating slurmd instance will create the following directories (mode 0700, owned by the job owner's uid and gid):
+
+- `/tmp/slurm-8451`
+- `/tmp/slurm-8451/tmp`
+- `/tmp/slurm-8451/var_tmp`
+- `/dev/shm/job-8451`
+
+When the slurmd starts a slurmstepd associated with the job, the slurmstepd creates a new mount namespace does the following bind-mounts:
+
+- `/tmp/slurm-8451/tmp` → `/tmp`
+- `/tmp/slurm-8451/var_tmp` → `/var/tmp`
+- `/dev/shm/job-8451` → `/dev/shm`
+
+In the epilog stage for job 8451, each participating slurmd instance will remove the directories that were created.  The  directories/files can be left behind using the `--no-rm-tmpdir` option.  If a `/dev/shm` bind-mount was created, it is always removed.
+
+The `--use-shared-tmpdir` option changes the default base directory to a shared scratch storage path configured at build time (e.g. on a Lustre file system).  Using the optional `per-node` value for this option alters the directory naming to include the short hostname as a directory component, e.g. `<base>/job-8451/n000`.

@@ -30,26 +30,38 @@ ENDIF (NOT SLURM_FOUND)
 MARK_AS_ADVANCED (SLURM_LIBRARIES SLURM_INCLUDE_DIRS)
 
 #
-# Use shared TMPDIR option?
-#
-OPTION(ENABLE_SHARED_STORAGE "Enable shared TMPDIR flag" FALSE)
-SET(SHARED_STORAGE_PATH "" CACHE PATH "Base directory for shared TMPDIR storage")
-IF (ENABLE_SHARED_STORAGE)
-    IF (NOT SHARED_STORAGE_PATH)
-        MESSAGE(FATAL_ERROR "When shared TMPDIR is enabled, SHARED_STORAGE_PATH must be set.")
-    ENDIF (NOT SHARED_STORAGE_PATH)
-ENDIF (ENABLE_SHARED_STORAGE)
-
-#
 # Extension on shared library?
 #
 SET (SHARED_LIB_SUFFIX ".so" CACHE STRING "String to add to end of shared library name")
 
 #
+# Our configurable CMake variables:
+#
+IF (EXISTS "/dev/shm" )
+    SET (AUTO_TMPDIR_DEV_SHM "/dev/shm" CACHE PATH "Directory at which POSIX shm is mounted.")
+    SET (AUTO_TMPDIR_DEV_SHM_PREFIX "/dev/shm/slurm-" CACHE PATH "Path to which the Slurm job id will be appended to create a /dev/shm bind mountpoint")
+ELSE (EXISTS "/dev/shm")
+    SET (AUTO_TMPDIR_DEV_SHM "" CACHE PATH "Directory at which POSIX shm is mounted.")
+    SET (AUTO_TMPDIR_DEV_SHM_PREFIX "" CACHE PATH "Path to which the Slurm job id will be appended to create a /dev/shm bind mountpoint")
+ENDIF (EXISTS "/dev/shm")
+
+SET (AUTO_TMPDIR_DEFAULT_LOCAL_PREFIX "/tmp/slurm-" CACHE PATH "Path to which the Slurm job id will be appended to create a local directory to hold all bind mountpoints (e.g. /tmp, /var/tmp)")
+
+OPTION (AUTO_TMPDIR_ENABLE_SHARED_TMPDIR "Enable a global shared directory space into which temp directories can be created." OFF)
+IF ( AUTO_TMPDIR_ENABLE_SHARED_TMPDIR )
+    SET (AUTO_TMPDIR_DEFAULT_SHARED_PREFIX "" CACHE PATH "Path to which the Slurm job id will be appended to create a shared directory to hold all bind mountpoints (e.g. /tmp, /var/tmp)")
+ENDIF ( AUTO_TMPDIR_ENABLE_SHARED_TMPDIR )
+
+#
+# Generate canned header inclusions, etc.
+#
+CONFIGURE_FILE(auto_tmpdir_config.h.in auto_tmpdir_config.h)
+
+#
 # Build the plugin as a library (that's what it is):
 #
-ADD_LIBRARY (auto_tmpdir MODULE auto_tmpdir.c)
-INCLUDE_DIRECTORIES (BEFORE ${SLURM_INCLUDE_DIRS})
+ADD_LIBRARY (auto_tmpdir MODULE fs-utils.c auto_tmpdir.c)
+TARGET_INCLUDE_DIRECTORIES (auto_tmpdir PUBLIC ${SLURM_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR})
 SET_TARGET_PROPERTIES (auto_tmpdir PROPERTIES PREFIX "" SUFFIX ${SHARED_LIB_SUFFIX} OUTPUT_NAME "auto_tmpdir")
 IF (ENABLE_SHARED_STORAGE)
     TARGET_COMPILE_DEFINITIONS (auto_tmpdir PUBLIC WITH_SHARED_STORAGE SHARED_STORAGE_PATH=${SHARED_STORAGE_PATH})
