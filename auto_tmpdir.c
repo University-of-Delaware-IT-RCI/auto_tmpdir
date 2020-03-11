@@ -87,7 +87,11 @@ struct spank_option spank_options[] =
 
 #ifdef AUTO_TMPDIR_ENABLE_SHARED_TMPDIR
         { "use-shared-tmpdir", NULL,
-            "Create temporary directories on shared storage (overridden by --tmpdir).  Use \"--use-shared-tmpdir=per-node\" to create unique sub-directories for each node allocated to the job (e.g. <base>/job_<jobid>/<nodename>).",
+#ifdef HAVE_SPANK_JOB_ARRAY_IDS
+            "Create temporary directories on shared storage (overridden by --tmpdir).  Use \"--use-shared-tmpdir=per-node\" to create unique sub-directories for each node allocated to the job (e.g. <base><job-id>{.<array-task-id>}/<nodename>).",
+#else
+            "Create temporary directories on shared storage.  Use \"--use-shared-tmpdir=per-node\" to create unique sub-directories for each node allocated to the job (e.g. <base><job-id>/<nodename>).",
+#endif
             2, 0, (spank_opt_cb_f) _opt_use_shared_tmpdir },
 #endif
 
