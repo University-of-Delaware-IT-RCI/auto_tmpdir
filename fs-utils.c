@@ -338,7 +338,14 @@ auto_tmpdir_fs_init(
             }
         }
         else if ( strcmp(argv[i], "no_dev_shm") == 0 ) {
+                slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: no_dev_shm set, will not add /dev/shm bind mounts");
             options |= auto_tmpdir_fs_options_should_not_map_dev_shm;
+        }
+        else if ( strcmp(argv[i], "no_rm_shared_only") == 0 ) {
+            if ( (options & auto_tmpdir_fs_options_should_use_shared) != auto_tmpdir_fs_options_should_use_shared ) {
+                slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: no_rm_shared_only set, ensuring no should_not_delete bit in options");
+                options &= ~auto_tmpdir_fs_options_should_not_delete;
+            }
         }
         i++;
     }

@@ -44,6 +44,12 @@ The creation and bind-mount of `/dev/shm` can also be disabled:
 required    auto_tmpdir.so          mount=/tmp mount=/var/tmp no_dev_shm
 ```
 
+The scope of the `--no-rm-tmpdir` functionality can be limited to jobs that request `--use-shared-tmpdir`:
+
+```
+required    auto_tmpdir.so          mount=/tmp mount=/var/tmp no_rm_shared_only
+```
+
 ## Order of mount= options
 
 Please note that the *order* of the `mount=` options can be significant:
