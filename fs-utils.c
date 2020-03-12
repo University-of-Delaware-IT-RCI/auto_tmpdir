@@ -74,37 +74,43 @@ auto_tmpdir_fs_bindpoint_dealloc(
         auto_tmpdir_fs_bindpoint_t  *next = bindpoint->link;
         int                         is_okay = 1;
 
-        slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: `%s` -> `%s` (%d|%d)", bindpoint->bind_this_path, bindpoint->to_this_path, bindpoint->is_bind_mounted, bindpoint->should_always_remove);
-        if ( bindpoint->is_bind_mounted ) {
-            if ( umount2(bindpoint->to_this_path, MNT_FORCE) != 0 ) {
-                slurm_warning("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: unable to unmount bind point `%s` -> `%s`", bindpoint->to_this_path, bindpoint->bind_this_path);
-                rc = -1;
-                is_okay = 0;
-                /*  Attempt to remove the bound path itself to drop all content: */
-                if ( ! should_dealloc_only && (bindpoint->should_always_remove || ! should_not_delete) ) {
-                    slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: failed to unmount, removing content of directory `%s`", bindpoint->to_this_path);
-                    auto_tmpdir_rmdir_recurse(bindpoint->to_this_path, 1);
-                }
-            }
-        }
-        if ( is_okay ) {
-            /* Remove the directory being bind mounted: */
-            if ( ! should_dealloc_only && ((bindpoint->should_always_remove || ! should_not_delete)) ) {
-                struct stat         finfo;
-
-                if ( stat(bindpoint->bind_this_path, &finfo) == 0 ) {
-                    slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: removing directory `%s`", bindpoint->bind_this_path);
-                    if ( auto_tmpdir_rmdir_recurse(bindpoint->bind_this_path, 0) != 0 ) rc = -1;
+        slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: `%s` -> `%s` (%d|%d) %p", bindpoint->bind_this_path, bindpoint->to_this_path, bindpoint->is_bind_mounted, bindpoint->should_always_remove, next);
+        if ( ! should_dealloc_only ) {
+            if ( bindpoint->is_bind_mounted ) {
+                if ( umount2(bindpoint->to_this_path, MNT_FORCE) != 0 ) {
+                    slurm_warning("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: unable to unmount bind point `%s` -> `%s`", bindpoint->to_this_path, bindpoint->bind_this_path);
+                    rc = -1;
+                    is_okay = 0;
+                    /*  Attempt to remove the bound path itself to drop all content: */
+                    if ( ! should_dealloc_only && (bindpoint->should_always_remove || ! should_not_delete) ) {
+                        slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: failed to unmount, removing content of directory `%s`", bindpoint->to_this_path);
+                        auto_tmpdir_rmdir_recurse(bindpoint->to_this_path, 1);
+                    }
                 } else {
-                    slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: directory `%s` no longer exists", bindpoint->bind_this_path);
+                    bindpoint->is_bind_mounted = 0;
+                }
+            }
+            if ( is_okay ) {
+                /* Remove the directory being bind mounted: */
+                if ( bindpoint->should_always_remove || ! should_not_delete ) {
+                    struct stat         finfo;
+
+                    if ( stat(bindpoint->bind_this_path, &finfo) == 0 ) {
+                        slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: removing directory `%s`", bindpoint->bind_this_path);
+                        if ( auto_tmpdir_rmdir_recurse(bindpoint->bind_this_path, 0) != 0 ) rc = -1;
+                    } else {
+                        slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: directory `%s` no longer exists", bindpoint->bind_this_path);
+                    }
                 }
             }
         }
+        
         /* Deallocate this node: */
         free((void*)bindpoint->bind_this_path);
         free((void*)bindpoint->to_this_path);
         free((void*)bindpoint);
 
+        slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: moving to next directory %p", next);
         bindpoint = next;
     }
     return rc;
@@ -186,6 +192,7 @@ __auto_tmpdir_fs_create_bindpoint(
     const char          *bind_this_path,
     const char          *to_this_path,
     int                 should_always_remove,
+    int                 force_head_of_list,
     uid_t               u_owner,
     gid_t               g_owner
 )
@@ -250,7 +257,7 @@ force_chown:
     }
     slurm_debug("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: added bindpoint `%s` -> `%s`", bind_this_path, to_this_path);
 
-    if ( fs_info->base_dir_parent && (strcmp(fs_info->base_dir_parent, to_this_path) == 0) ) {
+    if ( force_head_of_list || (fs_info->base_dir_parent && (strcmp(fs_info->base_dir_parent, to_this_path) == 0)) ) {
         /*
          * Add this bind point at the FRONT of the list, so that it's mounted LAST and unmounted FIRST:
          */
@@ -397,38 +404,6 @@ auto_tmpdir_fs_init(
         new_fs->bind_mounts = new_fs->bind_mounts_tail = NULL;
 
         /*
-         * Attempt to setup a mapped /dev/shm if desired:
-         */
-        if ( (options & auto_tmpdir_fs_options_should_not_map_dev_shm) != auto_tmpdir_fs_options_should_not_map_dev_shm ) {
-            struct stat             finfo;
-
-            if ( stat(auto_tmpdir_fs_dev_shm, &finfo) == 0 ) {
-                /*
-                 * Create our own /dev/shm space:
-                 */
-                const char          *dev_shm_dir = __auto_tmpdir_fs_path_create(
-                                                            auto_tmpdir_fs_dev_shm_prefix,
-                                                            (options & ~auto_tmpdir_fs_options_should_use_per_host),
-                                                            job_id,
-                                                            job_task_id
-                                                        );
-
-                if ( ! dev_shm_dir ) goto error_out;
-
-                /*
-                 * Add the moundpoint:
-                 */
-                if ( __auto_tmpdir_fs_create_bindpoint(new_fs, dev_shm_dir, auto_tmpdir_fs_dev_shm, 1, u_owner, g_owner) != 0 ) {
-                    free((void*)dev_shm_dir);
-                    goto error_out;
-                }
-            } else {
-                slurm_warning("auto_tmpdir::auto_tmpdir_fs_init: shm base directory `%s` does not exist", auto_tmpdir_fs_dev_shm);
-                goto error_out;
-            }
-        }
-
-        /*
          * Go through the config arguments and create each mount point specified:
          */
         i = 0;
@@ -512,6 +487,16 @@ auto_tmpdir_fs_init(
                         goto error_out;
                     }
                 }
+                
+                /*
+                 * Make a copy of the mountpoint (to dir):
+                 */
+                char                    *to_dir = (char*)malloc(bind_to_len + 1);
+                
+                if ( ! to_dir ) {
+                    slurm_error("auto_tmpdir::auto_tmpdir_fs_init: unable to allocate copy of mountpoint for `%s`", bind_to);
+                    goto error_out;
+                }
 
                 /*
                  * Create a temp directory under the base_dir to hold the bind mountpoint (note that
@@ -522,6 +507,7 @@ auto_tmpdir_fs_init(
 
                 if ( ! dir_path ) {
                     slurm_error("auto_tmpdir::auto_tmpdir_fs_init: unable to allocate tmp path template for `%s`", bind_to);
+                    free((void*)to_dir);
                     goto error_out;
                 }
                 strncpy(dir_path, new_fs->base_dir, prefix_len);
@@ -533,22 +519,63 @@ auto_tmpdir_fs_init(
                  * Map any slashes to underscores to flatten the bind_to path to a single name as we
                  * fill-in the rest of dir_path:
                  */
+                to_dir[0] = bind_to[0];
                 while ( i_bind_to < bind_to_len ) {
-                    char        c = bind_to[i_bind_to++];
-
+                    char        c = bind_to[i_bind_to];
+                    to_dir[i_bind_to++] = c;
                     dir_path[i_dir_path++] = ((c == '/') ? '_' : c);
                 }
+                to_dir[i_bind_to] = '\0';
                 dir_path[i_dir_path] = '\0';
 
                 /*
                  * Add the mountpoint:
                  */
-                if ( __auto_tmpdir_fs_create_bindpoint(new_fs, dir_path, bind_to, 0, u_owner, g_owner) != 0 ) {
+                if ( __auto_tmpdir_fs_create_bindpoint(new_fs, dir_path, to_dir, 0, 0, u_owner, g_owner) != 0 ) {
                     free((void*)dir_path);
+                    free((void*)to_dir);
                     goto error_out;
                 }
             }
             i++;
+        }
+
+        /*
+         * Attempt to setup a mapped /dev/shm if desired:
+         */
+        if ( (options & auto_tmpdir_fs_options_should_not_map_dev_shm) != auto_tmpdir_fs_options_should_not_map_dev_shm ) {
+            struct stat             finfo;
+
+            if ( stat(auto_tmpdir_fs_dev_shm, &finfo) == 0 ) {
+                /*
+                 * Create our own /dev/shm space:
+                 */
+                const char          *dev_shm_dir = __auto_tmpdir_fs_path_create(
+                                                            auto_tmpdir_fs_dev_shm_prefix,
+                                                            (options & ~auto_tmpdir_fs_options_should_use_per_host),
+                                                            job_id,
+                                                            job_task_id
+                                                        );
+                const char          *to_dir = strdup(auto_tmpdir_fs_dev_shm);
+                
+                if ( ! dev_shm_dir ) goto error_out;
+                if ( ! to_dir ) {
+                    slurm_error("auto_tmpdir::auto_tmpdir_fs_init: unable to allocate copy of to path `%s`", auto_tmpdir_fs_dev_shm);
+                    goto error_out;
+                }
+
+                /*
+                 * Add the moundpoint:
+                 */
+                if ( __auto_tmpdir_fs_create_bindpoint(new_fs, dev_shm_dir, to_dir, 1, 1, u_owner, g_owner) != 0 ) {
+                    free((void*)dev_shm_dir);
+                    free((void*)to_dir);
+                    goto error_out;
+                }
+            } else {
+                slurm_warning("auto_tmpdir::auto_tmpdir_fs_init: shm base directory `%s` does not exist", auto_tmpdir_fs_dev_shm);
+                goto error_out;
+            }
         }
     }
     return new_fs;
