@@ -477,6 +477,7 @@ auto_tmpdir_fs_init(
                      */
                     if ( should_check_bind_order ) {
                         const char          *end = prefix + strlen(prefix);
+                        char                *base_dir_parent;
                         
                         while ( (end > prefix) ) {
                             if ( *(--end) == '/' ) break;
@@ -485,13 +486,14 @@ auto_tmpdir_fs_init(
                             slurm_error("auto_tmpdir::auto_tmpdir_fs_init: using the root directory is not supported");
                             goto error_out;
                         }
-                        new_fs->base_dir_parent = (char*)malloc(end - prefix + 1);
-                        if ( ! new_fs->base_dir_parent ) {
+                        base_dir_parent = (char*)malloc(end - prefix + 1);
+                        if ( ! base_dir_parent ) {
                             slurm_error("auto_tmpdir::auto_tmpdir_fs_init: unable to allocate base directory parent");
                             goto error_out;
                         }
-                        strncpy(new_fs->base_dir_parent, prefix, (end - prefix));
-                        new_fs->base_dir_parent[end - prefix] = '\0';
+                        strncpy(base_dir_parent, prefix, (end - prefix));
+                        base_dir_parent[end - prefix] = '\0';
+                        new_fs->base_dir_parent = (const char*)base_dir_parent;
                     }
                     new_fs->base_dir = __auto_tmpdir_fs_path_create(
                                                             prefix,
