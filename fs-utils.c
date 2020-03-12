@@ -257,7 +257,6 @@ force_chown:
         if ( fs_info->bind_mounts ) {
             bindpoint->link = fs_info->bind_mounts;
             fs_info->bind_mounts->back_link = bindpoint;
-            if ( ! fs_info->bind_mounts_tail ) fs_info->bind_mounts_tail = fs_info->bind_mounts ? fs_info->bind_mounts : bindpoint;
             fs_info->bind_mounts = bindpoint;
         } else {
             fs_info->bind_mounts = fs_info->bind_mounts_tail = bindpoint;
