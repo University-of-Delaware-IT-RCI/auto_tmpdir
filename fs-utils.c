@@ -74,7 +74,7 @@ auto_tmpdir_fs_bindpoint_dealloc(
         auto_tmpdir_fs_bindpoint_t  *next = bindpoint->link;
         int                         is_okay = 1;
 
-        slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: `%s` -> `%s` (%d|%d)", bindpoint->to_this_path, bindpoint->bind_this_path, bindpoint->is_bind_mounted, bindpoint->should_always_remove);
+        slurm_debug("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: `%s` -> `%s` (%d|%d)", bindpoint->bind_this_path, bindpoint->to_this_path, bindpoint->is_bind_mounted, bindpoint->should_always_remove);
         if ( bindpoint->is_bind_mounted ) {
             if ( umount2(bindpoint->to_this_path, MNT_FORCE) != 0 ) {
                 slurm_warning("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: unable to unmount bind point `%s` -> `%s`", bindpoint->to_this_path, bindpoint->bind_this_path);
@@ -257,7 +257,7 @@ force_chown:
         if ( fs_info->bind_mounts ) {
             bindpoint->link = fs_info->bind_mounts;
             fs_info->bind_mounts->back_link = bindpoint;
-            if ( ! fs_info->bind_mounts_tail ) fs_info->bind_mounts_tail = fs_info->bind_mounts;
+            if ( ! fs_info->bind_mounts_tail ) fs_info->bind_mounts_tail = fs_info->bind_mounts ? fs_info->bind_mounts : bindpoint;
             fs_info->bind_mounts = bindpoint;
         } else {
             fs_info->bind_mounts = fs_info->bind_mounts_tail = bindpoint;
