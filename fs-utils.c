@@ -38,9 +38,25 @@ auto_tmpdir_fs_bindpoint_alloc(
         new_rec->is_bind_mounted = 0;
         new_rec->should_always_remove = should_always_remove;
         new_rec->bind_this_path = bind_this_path;
-        new_rec->to_this_path = strdup(to_this_path);
+        new_rec->to_this_path = to_this_path;
     }
     return new_rec;
+}
+
+/**/
+
+auto_tmpdir_fs_bindpoint_t*
+auto_tmpdir_fs_bindpoint_find_to_path(
+    auto_tmpdir_fs_bindpoint_t  *bindpoint,
+    const char                  *path_of_interest,
+    size_t                      path_of_interest_len
+)
+{
+    while ( bindpoint ) {
+        if ( strncmp(bindpoint->to_this_path, path_of_interest, path_of_interest_len) == 0 ) return bindpoint;
+        bindpoint = bindpoint->link;
+    }
+    return NULL;
 }
 
 /**/
@@ -99,7 +115,7 @@ auto_tmpdir_fs_bindpoint_dealloc(
 typedef struct auto_tmpdir_fs {
     auto_tmpdir_fs_options_t    options;
     const char                  *tmpdir;
-    const char                  *base_dir;
+    const char                  *base_dir, *base_dir_parent;
     auto_tmpdir_fs_bindpoint_t  *bind_mounts, *bind_mounts_tail;
 } auto_tmpdir_fs;
 
@@ -234,12 +250,26 @@ force_chown:
     }
     slurm_debug("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: added bindpoint `%s` -> `%s`", bind_this_path, to_this_path);
 
-    if ( fs_info->bind_mounts_tail ) {
-        fs_info->bind_mounts_tail->link = bindpoint;
-        bindpoint->back_link = fs_info->bind_mounts_tail;
-        fs_info->bind_mounts_tail = bindpoint;
+    if ( fs_info->base_dir_parent && (strcmp(fs_info->base_dir_parent, to_this_path) == 0) ) {
+        /*
+         * Add this bind point at the FRONT of the list, so that it's mounted LAST and unmounted FIRST:
+         */
+        if ( fs_info->bind_mounts ) {
+            bindpoint->link = fs_info->bind_mounts;
+            fs_info->bind_mounts->back_link = bindpoint;
+            if ( ! fs_info->bind_mounts_tail ) fs_info->bind_mounts_tail = fs_info->bind_mounts;
+            fs_info->bind_mounts = bindpoint;
+        } else {
+            fs_info->bind_mounts = fs_info->bind_mounts_tail = bindpoint;
+        }
     } else {
-        fs_info->bind_mounts = fs_info->bind_mounts_tail = bindpoint;
+        if ( fs_info->bind_mounts_tail ) {
+            fs_info->bind_mounts_tail->link = bindpoint;
+            bindpoint->back_link = fs_info->bind_mounts_tail;
+            fs_info->bind_mounts_tail = bindpoint;
+        } else {
+            fs_info->bind_mounts = fs_info->bind_mounts_tail = bindpoint;
+        }
     }
     return 0;
 }
@@ -262,7 +292,7 @@ auto_tmpdir_fs_init(
 )
 {
     auto_tmpdir_fs              *new_fs;
-    int                         is_array_job = 0, i;
+    int                         is_array_job = 0, should_check_bind_order = 1, i;
     uint32_t                    job_id = NO_VAL, job_task_id = NO_VAL;
     uid_t                       u_owner;
     gid_t                       g_owner;
@@ -347,6 +377,10 @@ auto_tmpdir_fs_init(
                 options &= ~auto_tmpdir_fs_options_should_not_delete;
             }
         }
+        else if ( strcmp(argv[i], "no_bind_order_check") == 0 ) {
+            slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: no_bind_order_check set, will not check bind mount order");
+            should_check_bind_order = 0;
+        }
         i++;
     }
 
@@ -360,7 +394,7 @@ auto_tmpdir_fs_init(
     if ( (new_fs = (auto_tmpdir_fs*)malloc(sizeof(auto_tmpdir_fs))) ) {
         new_fs->options = options;
         new_fs->tmpdir = tmpdir ? strdup(tmpdir) : NULL;
-        new_fs->base_dir = NULL;
+        new_fs->base_dir = new_fs->base_dir_parent = NULL;
         new_fs->bind_mounts = new_fs->bind_mounts_tail = NULL;
 
         /*
@@ -402,9 +436,25 @@ auto_tmpdir_fs_init(
         while ( i < argc ) {
             if ( strncmp(argv[i], "mount=", 6) == 0 ) {
                 const char      *bind_to = argv[i] + 6;
+                size_t          bind_to_len = strlen(bind_to);
+                
                 if ( *bind_to != '/' ) {
                     slurm_error("auto_tmpdir::auto_tmpdir_fs_init: invalid mount in plugstack configuration (%s)", bind_to);
                     goto error_out;
+                }
+                while ( bind_to_len && (bind_to[bind_to_len - 1] == '/') ) bind_to_len--;
+                if ( bind_to_len == 0 ) {
+                    slurm_error("auto_tmpdir::auto_tmpdir_fs_init: invalid mount in plugstack configuration (%s)", bind_to);
+                    goto error_out;
+                }
+                
+                /*
+                 * Make sure we haven't already registered it:
+                 */
+                if ( auto_tmpdir_fs_bindpoint_find_to_path(new_fs->bind_mounts, bind_to, bind_to_len) ) {
+                    slurm_warning("auto_tmpdir::auto_tmpdir_fs_init: ignoring repeated mount in plugstack configuration (%s)", bind_to);
+                    i++;
+                    continue;
                 }
 
                 /*
@@ -420,6 +470,28 @@ auto_tmpdir_fs_init(
                             goto error_out;
                         }
                         prefix = shared_prefix;
+                    }
+                    
+                    /*
+                     * Find the parent directory of the base_dir:
+                     */
+                    if ( should_check_bind_order ) {
+                        const char          *end = prefix + strlen(prefix);
+                        
+                        while ( (end > prefix) ) {
+                            if ( *(--end) == '/' ) break;
+                        }
+                        if ( end <= prefix ) {
+                            slurm_error("auto_tmpdir::auto_tmpdir_fs_init: using the root directory is not supported");
+                            goto error_out;
+                        }
+                        new_fs->base_dir_parent = (char*)malloc(end - prefix + 1);
+                        if ( ! new_fs->base_dir_parent ) {
+                            slurm_error("auto_tmpdir::auto_tmpdir_fs_init: unable to allocate base directory parent");
+                            goto error_out;
+                        }
+                        strncpy(new_fs->base_dir_parent, prefix, (end - prefix));
+                        new_fs->base_dir_parent[end - prefix] = '\0';
                     }
                     new_fs->base_dir = __auto_tmpdir_fs_path_create(
                                                             prefix,
@@ -445,7 +517,6 @@ auto_tmpdir_fs_init(
                  * bind_to leads with a slash, which we'll discard in the directory name we map bind_to
                  * to, so that slash becomes the NUL character in the final path length):
                  */
-                char                    bind_to_len = strlen(bind_to);
                 char                    *dir_path = (char*)malloc(prefix_len + 1 + bind_to_len);
 
                 if ( ! dir_path ) {
@@ -494,6 +565,7 @@ error_out:
             if ( (new_fs->options & auto_tmpdir_fs_options_should_not_delete) != auto_tmpdir_fs_options_should_not_delete ) auto_tmpdir_rmdir_recurse(new_fs->base_dir, 0);
             free((void*)new_fs->base_dir);
         }
+        if ( new_fs->base_dir_parent ) free((void*)new_fs->base_dir_parent);
         if ( new_fs->tmpdir ) free((void*)new_fs->tmpdir);
         free((void*)new_fs);
     }
@@ -508,7 +580,7 @@ auto_tmpdir_fs_bind_mount(
 {
     int                         rc = 0;
     auto_tmpdir_fs_bindpoint_t  *bindpoint = fs_info->bind_mounts;
-
+    
     if ( bindpoint ) {
         /*
          * Skip ahead to the end, then go in reverse order:
@@ -544,13 +616,13 @@ auto_tmpdir_fs_bind_mount(
 	     */
 	    while ( (rc == 0) && bindpoint ) {
 	        if ( ! bindpoint->is_bind_mounted ) {
-	            slurm_debug("auto_tmpdir::auto_tmpdir_fs_bind_mount: bind-mounting `%s` -> `%s` (pid %d)", bindpoint->bind_this_path, bindpoint->to_this_path, getpid());
-	            if ( mount(bindpoint->bind_this_path, bindpoint->to_this_path, "none", MS_BIND, NULL) != 0 ) {
-	                slurm_error("auto_tmpdir::auto_tmpdir_fs_bind_mount: failed to bind-mount `%s` -> `%s` (%m)", bindpoint->bind_this_path, bindpoint->to_this_path);
-	                rc = -1;
-	            } else {
-	                bindpoint->is_bind_mounted = 1;
-	            }
+                slurm_debug("auto_tmpdir::auto_tmpdir_fs_bind_mount: bind-mounting `%s` -> `%s` (pid %d)", bindpoint->bind_this_path, bindpoint->to_this_path, getpid());
+                if ( mount(bindpoint->bind_this_path, bindpoint->to_this_path, "none", MS_BIND, NULL) != 0 ) {
+                    slurm_error("auto_tmpdir::auto_tmpdir_fs_bind_mount: failed to bind-mount `%s` -> `%s` (%m)", bindpoint->bind_this_path, bindpoint->to_this_path);
+                    rc = -1;
+                } else {
+                    bindpoint->is_bind_mounted = 1;
+                }
 	        }
 	        bindpoint = bindpoint->back_link;
 	    }
@@ -595,6 +667,7 @@ auto_tmpdir_fs_fini(
             }
             free((void*)fs_info->base_dir);
         }
+        if ( fs_info->base_dir_parent ) free((void*)fs_info->base_dir_parent);
         if ( fs_info->tmpdir ) free((void*)fs_info->tmpdir);
         free((void*)fs_info);
     }
