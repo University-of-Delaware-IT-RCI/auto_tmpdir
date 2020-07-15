@@ -13,9 +13,13 @@ The plugin accepts the following command-line options to srun/salloc/sbatch:
                               the job (e.g. <base><job-id>/<nodename>).
 ```
 
-Given a base directory prefix (configured at build, e.g. `/tmp/job-`) the job 8451 would see the directories `/tmp/job-8451` and `/dev/shm/job-8451` created in the prolog.  Optionally, a shared storage path (e.g. a directory on a Lustre filesystem) can be included which users can select via an salloc/srun/sbatch flag.  Each job step will create a new mount namespace and bind-mount `/dev/shm/job-8451` as `/dev/shm`.
+Given a base directory prefix (configured at build, e.g. `/tmp/job-`) the job 8451 would see the directories `/tmp/job-8451` and `/dev/shm/job-8451` created in the prolog.  Optionally, a shared storage path (e.g. a directory on a Lustre filesystem) can be included which users can select via an salloc/srun/sbatch flag.  Additionally, each job will by default create a new mount namespace and bind-mount `/dev/shm/job-8451` as `/dev/shm`.
 
-An arbitrary number of additional paths (typically `/tmp`, often additionally `/var/tmp`) will have directories created under `/dev/shm/job-8451` (e.g. `/dev/shm/job-8451/tmp` and `/dev/shm/job-8451/var_tmp`) to be bind-mounted in the job step.  The paths are configured in the Slurm `plugstack.conf` record for this plugin:
+An arbitrary number of additional paths (typically `/tmp`, often additionally `/var/tmp`) will have directories created under `/tmp/job-8451` (e.g. `/tmp/job-8451/tmp` and `/tmp/job-8451/var_tmp`) to be bind-mounted in the job step (as `/tmp` and `/var/tmp`, respectively).  Bind-mounting takes an existing directory and makes it appear to exist at a different path:  e.g. programs inside the job see the contents of `/tmp/job-8451/tmp` at the path `/tmp`.  Naughty programs that cannot be convinced to create temporary files inside `$TMPDIR` (perhaps they're hard-coded to create files in `/tmp`) end up creating those files inside `/tmp/job-8451/tmp`; when the job exits, removal of `/tmp/job-8451` disposes of everything!
+
+Bind-mounting of `/dev/shm` is especially important since the files in `/dev/shm` occupy virtual memory space.  If files are orphaned and not purged, the system can begin to run low on memory resources (Slurm does not look at actual free memory for a node when making scheduling decisions).  Removal of the bind-mounted `/dev/shm/job-8451` directory at job completion ensures all space is recovered.
+
+The bind-mounted paths are configured in the Slurm `plugstack.conf` record for this plugin:
 
 ```
 #
