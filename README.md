@@ -54,6 +54,12 @@ The scope of the `--no-rm-tmpdir` functionality can be limited to jobs that requ
 required    auto_tmpdir.so          mount=/tmp mount=/var/tmp no_rm_shared_only
 ```
 
+In order to make it quicker for the slurmstepd and epilog contexts to reconstruct the hierarchy of directories that are to be bind-mounted, the plugin creates a state file.  By default, this file will be in `/tmp` and be named according to the job properties:  `/tmp/auto_tmpdir_fs-<job-id>{_<job-task-id>}.cache`.  The base directory used for these files is configurable:
+
+```
+required    auto_tmpdir.so          mount=/tmp mount=/var/tmp state_dir=/var/tmp/auto_tmpdir_cache
+```
+
 ## Order of mount= options
 
 Please note that the *order* of the `mount=` options can be significant:
