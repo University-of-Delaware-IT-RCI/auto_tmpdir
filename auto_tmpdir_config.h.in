@@ -18,12 +18,6 @@
 #include <slurm/spank.h>
 #include <slurm/slurm.h>
 
-#if SLURM_VERSION_MAJOR(SLURM_VERSION_NUMBER) >= 19
-#if SLURM_VERSION_MINOR(SLURM_VERSION_NUMBER) >= 5
-#define HAVE_SPANK_JOB_ARRAY_IDS
-#endif
-#endif
-
 #cmakedefine AUTO_TMPDIR_DEV_SHM "@AUTO_TMPDIR_DEV_SHM@"
 #ifndef AUTO_TMPDIR_DEV_SHM
 #define AUTO_TMPDIR_DEV_SHM "/dev/shm"

@@ -154,19 +154,14 @@ const char*
 __auto_tmpdir_fs_path_create(
     const char                  *prefix,
     auto_tmpdir_fs_options_t    options,
-    uint32_t                    job_id,
-    uint32_t                    job_task_id
+    uint32_t                    job_id
 )
 {
     const char      *hostname = "";
     size_t          out_path_len = strlen(prefix) + 10 + 1;
     char            *out_path;
-    int             has_task = 0, has_hostname = 0;
+    int             has_hostname = 0;
 
-    if ( job_task_id != NO_VAL) {
-        out_path_len += 10 + 1;
-        has_task = 1;
-    }
     if ( (options & auto_tmpdir_fs_options_should_use_per_host) == auto_tmpdir_fs_options_should_use_per_host ) {
         hostname = __auto_tmpdir_fs_get_hostname();
         out_path_len += strlen(hostname) + 1;
@@ -178,9 +173,9 @@ __auto_tmpdir_fs_path_create(
         return NULL;
     }
     if ( has_hostname ) {
-        snprintf(out_path, out_path_len, (has_task ? "%1$s%2$u.%4$u/%3$s" : "%1$s%2$u/%3$s"), prefix, job_id, hostname, job_task_id);
+        snprintf(out_path, out_path_len, "%1$s%2$u/%3$s", prefix, job_id, hostname);
     } else {
-        snprintf(out_path, out_path_len, (has_task ? "%1$s%2$u.%3$u" : "%1$s%2$u"), prefix, job_id, job_task_id);
+        snprintf(out_path, out_path_len, "%1$s%2$u", prefix, job_id);
     }
     return out_path;
 }
@@ -299,8 +294,8 @@ auto_tmpdir_fs_init(
 )
 {
     auto_tmpdir_fs              *new_fs;
-    int                         is_array_job = 0, should_check_bind_order = 1, i;
-    uint32_t                    job_id = NO_VAL, job_task_id = NO_VAL;
+    int                         should_check_bind_order = 1, i;
+    uint32_t                    job_id = NO_VAL;
     uid_t                       u_owner;
     gid_t                       g_owner;
     const char                  *local_prefix = auto_tmpdir_fs_default_local_prefix, *shared_prefix = auto_tmpdir_fs_default_shared_prefix;
@@ -318,35 +313,13 @@ auto_tmpdir_fs_init(
         return NULL;
     }
 
-    /* We need the job id and task id: */
-#ifdef HAVE_SPANK_JOB_ARRAY_IDS
-    if ( (rc = spank_get_item(spank_ctxt, S_JOB_ARRAY_ID, &job_id)) != ESPANK_SUCCESS ) {
-        slurm_error("auto_tmpdir: auto_tmpdir_fs_init: no job array id associated with job??");
-        return NULL;
-    }
-    if ( job_id == 0 ) {
-        /* It's not an array job, so get the base job id: */
-        if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
-            slurm_error("auto_tmpdir: auto_tmpdir_fs_init: no job id associated with job??");
-            return NULL;
-        }
-    } else {
-        /* It's an array job, so get the array task id: */
-        is_array_job = 1;
-        if ( (rc = spank_get_item(spank_ctxt, S_JOB_ARRAY_TASK_ID, &job_task_id)) != ESPANK_SUCCESS ) {
-            slurm_error("auto_tmpdir::auto_tmpdir_fs_init: no job array task id associated with array job??");
-            return NULL;
-        }
-    }
-#else
     /* Get the base job id: */
     if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
         slurm_error("auto_tmpdir: auto_tmpdir_fs_init: no job id associated with job??");
         return NULL;
     }
-#endif
 
-    slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: %u.%u for owner %d:%d", job_id, job_task_id, u_owner, g_owner);
+    slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: %u for owner %d:%d", job_id, u_owner, g_owner);
 
     /*
      * First pass through the arguments to the plugin -- pull the local and/or shared prefix if present:
@@ -473,8 +446,7 @@ auto_tmpdir_fs_init(
                     new_fs->base_dir = __auto_tmpdir_fs_path_create(
                                                             prefix,
                                                             options,
-                                                            job_id,
-                                                            job_task_id
+                                                            job_id
                                                         );
                     if ( ! new_fs->base_dir ) {
                         slurm_error("auto_tmpdir::auto_tmpdir_fs_init: unable to allocate base directory");
@@ -554,8 +526,7 @@ auto_tmpdir_fs_init(
                 const char          *dev_shm_dir = __auto_tmpdir_fs_path_create(
                                                             auto_tmpdir_fs_dev_shm_prefix,
                                                             (options & ~auto_tmpdir_fs_options_should_use_per_host),
-                                                            job_id,
-                                                            job_task_id
+                                                            job_id
                                                         );
                 const char          *to_dir = strdup(auto_tmpdir_fs_dev_shm);
                 
@@ -879,40 +850,18 @@ __auto_tmpdir_fs_default_state_file(
     static char         *state_file = NULL;
     
     if ( ! state_file ) {
-        int             is_array_job = 0, i;
-        uint32_t        job_id = NO_VAL, job_task_id = NO_VAL;
+        int             i;
+        uint32_t        job_id = NO_VAL;
         const char      *state_dir = "/tmp";
         int             rc;
 
-        /* We need the job id and task id: */
-#ifdef HAVE_SPANK_JOB_ARRAY_IDS
-        if ( (rc = spank_get_item(spank_ctxt, S_JOB_ARRAY_ID, &job_id)) != ESPANK_SUCCESS ) {
-            slurm_error("auto_tmpdir: __auto_tmpdir_fs_default_state_file: no job array id associated with job??");
-            return NULL;
-        }
-        if ( job_id == 0 ) {
-            /* It's not an array job, so get the base job id: */
-            if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
-                slurm_error("auto_tmpdir: __auto_tmpdir_fs_default_state_file: no job id associated with job??");
-                return NULL;
-            }
-        } else {
-            /* It's an array job, so get the array task id: */
-            is_array_job = 1;
-            if ( (rc = spank_get_item(spank_ctxt, S_JOB_ARRAY_TASK_ID, &job_task_id)) != ESPANK_SUCCESS ) {
-                slurm_error("auto_tmpdir::__auto_tmpdir_fs_default_state_file: no job array task id associated with array job??");
-                return NULL;
-            }
-        }
-#else
         /* Get the base job id: */
         if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
             slurm_error("auto_tmpdir: __auto_tmpdir_fs_default_state_file: no job id associated with job??");
             return NULL;
         }
-#endif
 
-        slurm_debug("auto_tmpdir::__auto_tmpdir_fs_default_state_file: %u.%u", job_id, job_task_id);
+        slurm_debug("auto_tmpdir::__auto_tmpdir_fs_default_state_file: %u", job_id);
 
         /*
          * First pass through the arguments to the plugin -- pull the state_dir if present:
@@ -935,11 +884,11 @@ __auto_tmpdir_fs_default_state_file(
         /*
          * Path should be <state_dir>/auto_tmpdir_fs-<job-id>{_<job-task-id>}.cache
          */
-        rc = snprintf(NULL, 0, (is_array_job ? "%s/auto_tmpdir_fs-%u_%u.cache" : "%s/auto_tmpdir_fs-%u.cache"), state_dir, job_id, job_task_id);
+        rc = snprintf(NULL, 0, "%s/auto_tmpdir_fs-%u.cache", state_dir, job_id);
         if ( rc > 0 ) {
             state_file = malloc(rc + 1);
             if ( state_file ) {
-                snprintf(state_file, rc + 1, (is_array_job ? "%s/auto_tmpdir_fs-%u_%u.cache" : "%s/auto_tmpdir_fs-%u.cache"), state_dir, job_id, job_task_id);
+                snprintf(state_file, rc + 1, "%s/auto_tmpdir_fs-%u.cache", state_dir, job_id);
             }
         }
     }
@@ -1010,6 +959,7 @@ auto_tmpdir_fs_serialize_to_file(
             /* Move to previous node: */
             bindpoint_node = bindpoint_node->back_link;
         }
+        slurm_debug("auto_tmpdir::auto_tmpdir_fs_serialize_to_file: serialized to `%s`", filepath);
         
 early_exit:
         close(state_file_fd);
