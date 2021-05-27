@@ -16,6 +16,14 @@
 
 /**/
 
+#ifdef AUTO_TMPDIR_NO_GID_CHOWN
+#   define NEEDS_CHOWN(F,U,G) ((F).st_uid != (U)) 
+#   define __auto_tmpdir_chown(P,U,G) (chown((P), (U), -1))
+#else
+#   define NEEDS_CHOWN(F,U,G) (((F).st_uid != (U)) || ((F).st_gid != (G))) 
+#   define __auto_tmpdir_chown(P,U,G) (chown((P), (U), (G)))
+#endif
+
 typedef struct auto_tmpdir_fs_bindpoint {
     struct auto_tmpdir_fs_bindpoint *link, *back_link;
     int                 is_bind_mounted, should_always_remove;
@@ -213,7 +221,7 @@ force_mkdir:
          * Fixup ownership:
          */
 force_chown:
-        if ( chown(bind_this_path, u_owner, g_owner) ) {
+        if ( __auto_tmpdir_chown(bind_this_path, u_owner, g_owner) ) {
             slurm_error("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: unable to fixup ownership on directory `%s` (%m)", bind_this_path);
             auto_tmpdir_rmdir_recurse(bind_this_path, 0);
             return -1;
@@ -234,7 +242,7 @@ force_chown:
          * Now go back and try to create the directory:
          */
         goto force_mkdir;
-    } else if ( (finfo.st_uid != u_owner) || (finfo.st_gid != g_owner) ) {
+    } else if ( NEEDS_CHOWN(finfo, u_owner, g_owner) ) {
         /*
          * Go back and try to change ownership:
          */
@@ -308,10 +316,15 @@ auto_tmpdir_fs_init(
         slurm_error ("auto_tmpdir: auto_tmpdir_fs_init: unable to get job's user id");
         return NULL;
     }
+    
+#ifndef AUTO_TMPDIR_NO_GID_CHOWN
     if ((rc = spank_get_item (spank_ctxt, S_JOB_GID, &g_owner)) != ESPANK_SUCCESS) {
         slurm_error ("auto_tmpdir: auto_tmpdir_fs_init: unable to get job's group id");
         return NULL;
     }
+#else
+    g_owner = -1;
+#endif
 
     /* Get the base job id: */
     if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
@@ -720,7 +733,7 @@ auto_tmpdir_mkdir_recurse(
                     return -1;
                 }
                 if ( should_set_owner ) {
-                    if ( chown(local_path, u_owner, g_owner) ) {
+                    if ( __auto_tmpdir_chown(local_path, u_owner, g_owner) ) {
                         slurm_info("auto_tmpdir::auto_tmpdir_mkdir_recurse: unable to chown directory `%s` (%m)", local_path);
                         return -1;
                     }
