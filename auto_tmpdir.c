@@ -176,7 +176,7 @@ slurm_spank_job_prolog(
             slurm_error("auto_tmpdir::slurm_spank_job_prolog: failure to create fs info");
             rc = ESPANK_ERROR;
         }
-        if ( auto_tmpdir_fs_serialize_to_file(auto_tmpdir_fs_info, spank_ctxt, argc, argv, NULL) != 0 ) {
+        else if ( auto_tmpdir_fs_serialize_to_file(auto_tmpdir_fs_info, spank_ctxt, argc, argv, NULL) != 0 ) {
             slurm_error("auto_tmpdir::slurm_spank_job_prolog: failure to serialize fs info");
             rc = ESPANK_ERROR;
         }

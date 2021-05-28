@@ -1040,15 +1040,13 @@ auto_tmpdir_fs_init_with_file(
         ssize_t     in_bytes = 0, expect_bytes = 0;
         size_t      size_bytes = 0;
         
-        new_fs = malloc(sizeof(auto_tmpdir_fs));
+        new_fs = calloc(1, sizeof(auto_tmpdir_fs));
         if ( new_fs ) {
             /* Read the header: */
             AUTO_TMPDIR_FS_UNSERIALIZE(new_fs->options);
             AUTO_TMPDIR_FS_UNSERIALIZE_CSTR(new_fs->tmpdir);
             AUTO_TMPDIR_FS_UNSERIALIZE_CSTR(new_fs->base_dir);
             AUTO_TMPDIR_FS_UNSERIALIZE_CSTR(new_fs->base_dir_parent);
-            new_fs->bind_mounts = NULL;
-            new_fs->bind_mounts_tail = NULL;
             
             while ( 1 ) {
                 int         is_bind_mounted;
@@ -1060,7 +1058,7 @@ auto_tmpdir_fs_init_with_file(
                 in_bytes += initial_in_bytes; expect_bytes += sizeof(is_bind_mounted);
                 
                 /* Allocate a node: */
-                auto_tmpdir_fs_bindpoint_t  *bindpoint_node = malloc(sizeof(auto_tmpdir_fs_bindpoint_t));
+                auto_tmpdir_fs_bindpoint_t  *bindpoint_node = calloc(1, sizeof(auto_tmpdir_fs_bindpoint_t));
                 if ( ! bindpoint_node ) {
                     slurm_error("auto_tmpdir::auto_tmpdir_fs_init_with_file: failed to allocate auto_tmpdir_fs bindpoint node");
                     rc = 1; goto early_exit;
