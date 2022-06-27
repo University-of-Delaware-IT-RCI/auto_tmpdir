@@ -106,7 +106,7 @@ The `--use-shared-tmpdir` option changes the default base directory to a shared 
 The build system is configured via CMake.  The [CMakeLists.txt](./CMakeLists.txt) file outlines the variables that affect the build:
 
 | Variable | Discussion | Default |
-|---|---|---|---|---|
+| --- | --- | --- |
 | `SLURM_PREFIX` | Path at which Slurm is installed; the plugin will get installed to `${SLURM_PREFIX}/lib/slurm`, linked against libraries in `${SLURM_PREFIX}/lib`, and headers will be used from `${SLURM_PREFIX}/include`. | `/usr/local` |
 | `SHARED_LIB_SUFFIX` | Suffix used on the plugin binary | `.so` |
 | `AUTO_TMPDIR_DEV_SHM` | Directory under which shared memory files are created. | `/dev/shm` if it exists |
