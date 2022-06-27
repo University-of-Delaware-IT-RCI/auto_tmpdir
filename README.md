@@ -100,3 +100,65 @@ When the slurmd starts a slurmstepd associated with the job, the slurmstepd crea
 In the epilog stage for job 8451, each participating slurmd instance will remove the directories that were created.  The  directories/files can be left behind using the `--no-rm-tmpdir` option.  If a `/dev/shm` bind-mount was created, it is always removed.
 
 The `--use-shared-tmpdir` option changes the default base directory to a shared scratch storage path configured at build time (e.g. on a Lustre file system).  Using the optional `per-node` value for this option alters the directory naming to include the short hostname as a directory component, e.g. `<base>/job-8451/n000`.
+
+## Building the plugin
+
+The build system is configured via CMake.  The [CMakeLists.txt](./CMakeLists.txt) file outlines the variables that affect the build:
+
+| Variable | Discussion | Default |
+|---|---|---|---|---|
+| `SLURM_PREFIX` | Path at which Slurm is installed; the plugin will get installed to `${SLURM_PREFIX}/lib/slurm`, linked against libraries in `${SLURM_PREFIX}/lib`, and headers will be used from `${SLURM_PREFIX}/include`. | `/usr/local` |
+| `SHARED_LIB_SUFFIX` | Suffix used on the plugin binary | `.so` |
+| `AUTO_TMPDIR_DEV_SHM` | Directory under which shared memory files are created. | `/dev/shm` if it exists |
+| `AUTO_TMPDIR_DEFAULT_LOCAL_PREFIX` | Path prefix to which job id is appended to create the per-job temp directory.  E.g. `/tmp/slurm-` yields directories like `/tmp/slurm-<jobid>` while `/tmp/slurm/` would produce the deeper path `/tmp/slurm/<jobid>` | `/tmp/slurm-` |
+| `AUTO_TMPDIR_ENABLE_SHARED_TMPDIR` | Enables an alternate directory hierarchy (typically on network-shared media) available for temp directories at the user's request. | OFF |
+| `AUTO_TMPDIR_ENABLE_SHARED_TMPDIR` | If the alternate directory hierarchy is enabled, this is its equivalent to `AUTO_TMPDIR_DEFAULT_LOCAL_PREFIX` | |
+| `AUTO_TMPDIR_NO_GID_CHOWN` | The temporary directories created by the plugin will *not* be reowned to the job's gid; this option is always ON for Slurm releases < 20 | OFF |
+
+On our clusters we build and install Slurm to `/opt/shared/slurm/<version>` and have local SSD storage on compute nodes mounted as `/tmp`.  CentOS does present the `/dev/shm` mountpoint for shared memory files.  We also have a special area set aside on our Lustre file system for shared temp directories.  Thus, setup of a build environment for Slurm looks like this:
+
+```
+$ git clone https://github.com/University-of-Delaware-IT-RCI/auto_tmpdir.git
+$ cd auto_tmpdir
+$ mkdir build-20220627
+$ cd build-20220627
+$ cmake -DSLURM_PREFIX=/opt/shared/slurm/20.11.5 -DCMAKE_BUILD_TYPE=Release \
+    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=YES \
+    -DAUTO_TMPDIR_DEFAULT_SHARED_PREFIX=/lustre/slurm \
+	..
+	
+-- The C compiler identification is GNU 4.8.5
+-- Check for working C compiler: /usr/bin/cc
+-- Check for working C compiler: /usr/bin/cc -- works
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Found SLURM: /opt/shared/slurm/20.11.5/lib/libslurm.so  
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /opt/shared/slurm/add-ons/auto_tmpdir/build-20.11.5
+```
+
+The default local path prefix, `/tmp/slurm-`, is fine by us.  The build is accomplished via `make`:
+
+```
+$ make
+Scanning dependencies of target auto_tmpdir
+[ 50%] Building C object CMakeFiles/auto_tmpdir.dir/fs-utils.c.o
+[100%] Building C object CMakeFiles/auto_tmpdir.dir/auto_tmpdir.c.o
+Linking C shared module auto_tmpdir.so
+[100%] Built target auto_tmpdir
+```
+
+It's fine to install the plugin at any time — Slurm won't use it until it has been configured to do so.
+
+```
+$ make install
+[100%] Built target auto_tmpdir
+Install the project...
+-- Install configuration: "Release"
+-- Installing: /opt/shared/slurm/20.11.5/lib/slurm/auto_tmpdir.so
+```
+
+The plugin is enabled by adding it to your `plugstack.conf` file on all nodes.
+
+With each upgrade to Slurm a new `build-<version>` directory is created and the build is done therein.
