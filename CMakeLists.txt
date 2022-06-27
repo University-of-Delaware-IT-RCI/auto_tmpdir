@@ -52,6 +52,8 @@ IF ( AUTO_TMPDIR_ENABLE_SHARED_TMPDIR )
     SET (AUTO_TMPDIR_DEFAULT_SHARED_PREFIX "" CACHE PATH "Path to which the Slurm job id will be appended to create a shared directory to hold all bind mountpoints (e.g. /tmp, /var/tmp)")
 ENDIF ( AUTO_TMPDIR_ENABLE_SHARED_TMPDIR )
 
+OPTION(AUTO_TMPDIR_NO_GID_CHOWN "Do not set the owner gid on per-job temporary directories (always enabled for Slurm releases < 20)" OFF)
+
 #
 # Generate canned header inclusions, etc.
 #

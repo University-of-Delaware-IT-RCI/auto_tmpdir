@@ -10,10 +10,19 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
+#include <fcntl.h>
 #include <fts.h>
 #include <sched.h>
 
 /**/
+
+#ifdef AUTO_TMPDIR_NO_GID_CHOWN
+#   define NEEDS_CHOWN(F,U,G) ((F).st_uid != (U)) 
+#   define __auto_tmpdir_chown(P,U,G) (chown((P), (U), -1))
+#else
+#   define NEEDS_CHOWN(F,U,G) (((F).st_uid != (U)) || ((F).st_gid != (G))) 
+#   define __auto_tmpdir_chown(P,U,G) (chown((P), (U), (G)))
+#endif
 
 typedef struct auto_tmpdir_fs_bindpoint {
     struct auto_tmpdir_fs_bindpoint *link, *back_link;
@@ -153,19 +162,14 @@ const char*
 __auto_tmpdir_fs_path_create(
     const char                  *prefix,
     auto_tmpdir_fs_options_t    options,
-    uint32_t                    job_id,
-    uint32_t                    job_task_id
+    uint32_t                    job_id
 )
 {
     const char      *hostname = "";
     size_t          out_path_len = strlen(prefix) + 10 + 1;
     char            *out_path;
-    int             has_task = 0, has_hostname = 0;
+    int             has_hostname = 0;
 
-    if ( job_task_id != NO_VAL) {
-        out_path_len += 10 + 1;
-        has_task = 1;
-    }
     if ( (options & auto_tmpdir_fs_options_should_use_per_host) == auto_tmpdir_fs_options_should_use_per_host ) {
         hostname = __auto_tmpdir_fs_get_hostname();
         out_path_len += strlen(hostname) + 1;
@@ -177,9 +181,9 @@ __auto_tmpdir_fs_path_create(
         return NULL;
     }
     if ( has_hostname ) {
-        snprintf(out_path, out_path_len, (has_task ? "%1$s%2$u.%4$u/%3$s" : "%1$s%2$u/%3$s"), prefix, job_id, hostname, job_task_id);
+        snprintf(out_path, out_path_len, "%1$s%2$u/%3$s", prefix, job_id, hostname);
     } else {
-        snprintf(out_path, out_path_len, (has_task ? "%1$s%2$u.%3$u" : "%1$s%2$u"), prefix, job_id, job_task_id);
+        snprintf(out_path, out_path_len, "%1$s%2$u", prefix, job_id);
     }
     return out_path;
 }
@@ -217,7 +221,7 @@ force_mkdir:
          * Fixup ownership:
          */
 force_chown:
-        if ( chown(bind_this_path, u_owner, g_owner) ) {
+        if ( __auto_tmpdir_chown(bind_this_path, u_owner, g_owner) ) {
             slurm_error("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: unable to fixup ownership on directory `%s` (%m)", bind_this_path);
             auto_tmpdir_rmdir_recurse(bind_this_path, 0);
             return -1;
@@ -238,7 +242,7 @@ force_chown:
          * Now go back and try to create the directory:
          */
         goto force_mkdir;
-    } else if ( (finfo.st_uid != u_owner) || (finfo.st_gid != g_owner) ) {
+    } else if ( NEEDS_CHOWN(finfo, u_owner, g_owner) ) {
         /*
          * Go back and try to change ownership:
          */
@@ -298,8 +302,8 @@ auto_tmpdir_fs_init(
 )
 {
     auto_tmpdir_fs              *new_fs;
-    int                         is_array_job = 0, should_check_bind_order = 1, i;
-    uint32_t                    job_id = NO_VAL, job_task_id = NO_VAL;
+    int                         should_check_bind_order = 1, i;
+    uint32_t                    job_id = NO_VAL;
     uid_t                       u_owner;
     gid_t                       g_owner;
     const char                  *local_prefix = auto_tmpdir_fs_default_local_prefix, *shared_prefix = auto_tmpdir_fs_default_shared_prefix;
@@ -312,40 +316,23 @@ auto_tmpdir_fs_init(
         slurm_error ("auto_tmpdir: auto_tmpdir_fs_init: unable to get job's user id");
         return NULL;
     }
+    
+#ifndef AUTO_TMPDIR_NO_GID_CHOWN
     if ((rc = spank_get_item (spank_ctxt, S_JOB_GID, &g_owner)) != ESPANK_SUCCESS) {
         slurm_error ("auto_tmpdir: auto_tmpdir_fs_init: unable to get job's group id");
         return NULL;
     }
-
-    /* We need the job id and task id: */
-#ifdef HAVE_SPANK_JOB_ARRAY_IDS
-    if ( (rc = spank_get_item(spank_ctxt, S_JOB_ARRAY_ID, &job_id)) != ESPANK_SUCCESS ) {
-        slurm_error("auto_tmpdir: auto_tmpdir_fs_init: no job array id associated with job??");
-        return NULL;
-    }
-    if ( job_id == 0 ) {
-        /* It's not an array job, so get the base job id: */
-        if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
-            slurm_error("auto_tmpdir: auto_tmpdir_fs_init: no job id associated with job??");
-            return NULL;
-        }
-    } else {
-        /* It's an array job, so get the array task id: */
-        is_array_job = 1;
-        if ( (rc = spank_get_item(spank_ctxt, S_JOB_ARRAY_TASK_ID, &job_task_id)) != ESPANK_SUCCESS ) {
-            slurm_error("auto_tmpdir::auto_tmpdir_fs_init: no job array task id associated with array job??");
-            return NULL;
-        }
-    }
 #else
+    g_owner = -1;
+#endif
+
     /* Get the base job id: */
     if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
         slurm_error("auto_tmpdir: auto_tmpdir_fs_init: no job id associated with job??");
         return NULL;
     }
-#endif
 
-    slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: %u.%u for owner %d:%d", job_id, job_task_id, u_owner, g_owner);
+    slurm_debug("auto_tmpdir::auto_tmpdir_fs_init: %u for owner %d:%d", job_id, u_owner, g_owner);
 
     /*
      * First pass through the arguments to the plugin -- pull the local and/or shared prefix if present:
@@ -472,8 +459,7 @@ auto_tmpdir_fs_init(
                     new_fs->base_dir = __auto_tmpdir_fs_path_create(
                                                             prefix,
                                                             options,
-                                                            job_id,
-                                                            job_task_id
+                                                            job_id
                                                         );
                     if ( ! new_fs->base_dir ) {
                         slurm_error("auto_tmpdir::auto_tmpdir_fs_init: unable to allocate base directory");
@@ -553,8 +539,7 @@ auto_tmpdir_fs_init(
                 const char          *dev_shm_dir = __auto_tmpdir_fs_path_create(
                                                             auto_tmpdir_fs_dev_shm_prefix,
                                                             (options & ~auto_tmpdir_fs_options_should_use_per_host),
-                                                            job_id,
-                                                            job_task_id
+                                                            job_id
                                                         );
                 const char          *to_dir = strdup(auto_tmpdir_fs_dev_shm);
                 
@@ -707,7 +692,6 @@ auto_tmpdir_fs_fini(
  * @function auto_tmpdir_mkdir_recurse
  *
  * Recursively create all directories in a path.
- *
  */
 int
 auto_tmpdir_mkdir_recurse(
@@ -749,7 +733,7 @@ auto_tmpdir_mkdir_recurse(
                     return -1;
                 }
                 if ( should_set_owner ) {
-                    if ( chown(local_path, u_owner, g_owner) ) {
+                    if ( __auto_tmpdir_chown(local_path, u_owner, g_owner) ) {
                         slurm_info("auto_tmpdir::auto_tmpdir_mkdir_recurse: unable to chown directory `%s` (%m)", local_path);
                         return -1;
                     }
@@ -865,4 +849,268 @@ auto_tmpdir_rmdir_recurse(
     }
     fts_close(ftsPtr);
     return rc;
+}
+
+/**/
+
+const char*
+__auto_tmpdir_fs_default_state_file(
+    spank_t             spank_ctxt,
+    int                 argc,
+    char*               argv[]
+)
+{
+    static char         *state_file = NULL;
+    
+    if ( ! state_file ) {
+        int             i;
+        uint32_t        job_id = NO_VAL;
+        const char      *state_dir = "/tmp";
+        int             rc;
+
+        /* Get the base job id: */
+        if ( (rc = spank_get_item(spank_ctxt, S_JOB_ID, &job_id)) != ESPANK_SUCCESS ) {
+            slurm_error("auto_tmpdir: __auto_tmpdir_fs_default_state_file: no job id associated with job??");
+            return NULL;
+        }
+
+        slurm_debug("auto_tmpdir::__auto_tmpdir_fs_default_state_file: %u", job_id);
+
+        /*
+         * First pass through the arguments to the plugin -- pull the state_dir if present:
+         */
+        i = 0;
+        while ( i < argc ) {
+            if ( strncmp(argv[i], "state_dir=", 10) == 0 ) {
+                state_dir = argv[i] + 10;
+                if ( *state_dir != '/' ) {
+                    slurm_error("auto_tmpdir::__auto_tmpdir_fs_default_state_file: invalid state_dir in plugstack configuration (%s)", state_dir);
+                    return NULL;
+                }
+                break;
+            }
+            i++;
+        }
+
+        slurm_debug("auto_tmpdir::__auto_tmpdir_fs_default_state_file: state_dir=%s", state_dir);
+        
+        /*
+         * Path should be <state_dir>/auto_tmpdir_fs-<job-id>{_<job-task-id>}.cache
+         */
+        rc = snprintf(NULL, 0, "%s/auto_tmpdir_fs-%u.cache", state_dir, job_id);
+        if ( rc > 0 ) {
+            state_file = malloc(rc + 1);
+            if ( state_file ) {
+                snprintf(state_file, rc + 1, "%s/auto_tmpdir_fs-%u.cache", state_dir, job_id);
+            }
+        }
+    }
+    return state_file;
+}
+
+#define AUTO_TMPDIR_FS_SERIALIZE(FIELD) \
+            out_bytes += write(state_file_fd, (void*)&(FIELD), sizeof(FIELD)); expect_bytes += sizeof(FIELD); \
+            if ( out_bytes != expect_bytes ) { \
+                slurm_error("auto_tmpdir::auto_tmpdir_fs_serialize_to_file: failed to write %s to `%s` (errno = %d)", #FIELD, filepath, errno); \
+                goto early_exit; \
+            }
+#define AUTO_TMPDIR_FS_SERIALIZE_CSTR(FIELD) \
+            size_bytes = (FIELD) ? strlen(FIELD) : 0; \
+            out_bytes += write(state_file_fd, (void*)&size_bytes, sizeof(size_bytes)); expect_bytes += sizeof(size_bytes); \
+            if ( out_bytes != expect_bytes ) { \
+                slurm_error("auto_tmpdir::auto_tmpdir_fs_serialize_to_file: failed to write %s string length to `%s` (errno = %d)", #FIELD, filepath, errno); \
+                goto early_exit; \
+            } \
+            if ( FIELD ) { out_bytes += write(state_file_fd, (void*)FIELD, size_bytes);  expect_bytes += size_bytes; } \
+            if ( out_bytes != expect_bytes ) { \
+                slurm_error("auto_tmpdir::auto_tmpdir_fs_serialize_to_file: failed to write %s string to `%s` (errno = %d)", #FIELD, filepath, errno); \
+                goto early_exit; \
+            }
+
+int
+auto_tmpdir_fs_serialize_to_file(
+    auto_tmpdir_fs_ref  fs_info,
+    spank_t             spank_ctxt,
+    int                 argc,
+    char*               argv[],
+    const char          *filepath
+)
+{
+    int                 rc, state_file_fd;
+    
+    if ( ! filepath ) {
+        filepath = __auto_tmpdir_fs_default_state_file(spank_ctxt, argc, argv);
+        if ( ! filepath ) {
+            slurm_error("auto_tmpdir::auto_tmpdir_fs_serialize_to_file: unable to get default state file path");
+            return ENOMEM;
+        }
+    }
+    
+    /* Attempt to open the file: */
+    state_file_fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if ( state_file_fd >= 0 ) {
+        ssize_t     out_bytes = 0, expect_bytes = 0;
+        size_t      size_bytes = 0;
+        
+        /*
+         * Write the header fields:
+         */
+        AUTO_TMPDIR_FS_SERIALIZE(fs_info->options);
+        AUTO_TMPDIR_FS_SERIALIZE_CSTR(fs_info->tmpdir);
+        AUTO_TMPDIR_FS_SERIALIZE_CSTR(fs_info->base_dir);
+        AUTO_TMPDIR_FS_SERIALIZE_CSTR(fs_info->base_dir_parent);
+        
+        auto_tmpdir_fs_bindpoint_t  *bindpoint_node = fs_info->bind_mounts_tail;
+        
+        while ( bindpoint_node ) {
+            /* State flags: */
+            AUTO_TMPDIR_FS_SERIALIZE(bindpoint_node->is_bind_mounted);
+            AUTO_TMPDIR_FS_SERIALIZE(bindpoint_node->should_always_remove);
+            AUTO_TMPDIR_FS_SERIALIZE_CSTR(bindpoint_node->bind_this_path);
+            AUTO_TMPDIR_FS_SERIALIZE_CSTR(bindpoint_node->to_this_path);
+            
+            /* Move to previous node: */
+            bindpoint_node = bindpoint_node->back_link;
+        }
+        slurm_debug("auto_tmpdir::auto_tmpdir_fs_serialize_to_file: serialized to `%s`", filepath);
+        
+early_exit:
+        close(state_file_fd);
+        rc =  ( out_bytes == expect_bytes ) ? 0 : errno;
+    } else {
+        slurm_error("auto_tmpdir::auto_tmpdir_fs_serialize_to_file: unable to open state file `%s` (errno = %d)", filepath, errno);
+        rc = errno;
+    }
+    return rc;
+}
+
+#define AUTO_TMPDIR_FS_UNSERIALIZE(FIELD) \
+            in_bytes += read(state_file_fd, (void*)&(FIELD), sizeof(FIELD)); expect_bytes += sizeof(FIELD); \
+            if ( in_bytes != expect_bytes ) { \
+                slurm_error("auto_tmpdir::auto_tmpdir_fs_init_with_file: failed to read %s from `%s` (errno = %d)", #FIELD, filepath, errno); \
+                rc = 1; goto early_exit; \
+            }
+#define AUTO_TMPDIR_FS_UNSERIALIZE_CSTR(FIELD) \
+            in_bytes += read(state_file_fd, (void*)&size_bytes, sizeof(size_bytes)); expect_bytes += sizeof(size_bytes); \
+            if ( in_bytes != expect_bytes ) { \
+                slurm_error("auto_tmpdir::auto_tmpdir_fs_init_with_file: failed to read %s string length from `%s` (errno = %d)", #FIELD, filepath, errno); \
+                rc = 1; goto early_exit; \
+            } \
+            if ( size_bytes ) { \
+                FIELD = malloc(size_bytes + 1); \
+                if ( ! FIELD ) { \
+                    slurm_error("auto_tmpdir::auto_tmpdir_fs_init_with_file: failed to allocate %s string (errno = %d)", #FIELD, errno); \
+                    rc = 1; goto early_exit; \
+                } \
+                in_bytes += read(state_file_fd, (void*)FIELD, size_bytes); expect_bytes += size_bytes; \
+                if ( in_bytes != expect_bytes ) { \
+                    slurm_error("auto_tmpdir::auto_tmpdir_fs_serialize_to_file: failed to write %s string to `%s` (errno = %d)", #FIELD, filepath, errno); \
+                    rc = 1; goto early_exit; \
+                } \
+                ((char*)FIELD)[size_bytes] = '\0'; \
+            } else { \
+                FIELD = NULL; \
+            }
+
+
+auto_tmpdir_fs_ref
+auto_tmpdir_fs_init_with_file(
+    spank_t                     spank_ctxt,
+    int                         argc,
+    char*                       argv[],
+    auto_tmpdir_fs_options_t    options,
+    const char                  *filepath,
+    int                         remove_state_file
+)
+{
+    auto_tmpdir_fs              *new_fs = NULL;
+    int                         state_file_fd, rc = 0;
+    
+    if ( ! filepath ) {
+        filepath = __auto_tmpdir_fs_default_state_file(spank_ctxt, argc, argv);
+        if ( ! filepath ) {
+            slurm_error("auto_tmpdir::auto_tmpdir_fs_init_with_file: unable to get default state file path");
+            return NULL;
+        }
+    }
+    
+    /* Attempt to open the file: */
+    state_file_fd = open(filepath, O_RDONLY);
+    if ( state_file_fd >= 0 ) {
+        ssize_t     in_bytes = 0, expect_bytes = 0;
+        size_t      size_bytes = 0;
+        
+        new_fs = calloc(1, sizeof(auto_tmpdir_fs));
+        if ( new_fs ) {
+            /* Read the header: */
+            AUTO_TMPDIR_FS_UNSERIALIZE(new_fs->options);
+            AUTO_TMPDIR_FS_UNSERIALIZE_CSTR(new_fs->tmpdir);
+            AUTO_TMPDIR_FS_UNSERIALIZE_CSTR(new_fs->base_dir);
+            AUTO_TMPDIR_FS_UNSERIALIZE_CSTR(new_fs->base_dir_parent);
+            
+            while ( 1 ) {
+                int         is_bind_mounted;
+                ssize_t     initial_in_bytes;
+                
+                /* Try to read an int to see if we have a record present: */
+                initial_in_bytes = read(state_file_fd, &is_bind_mounted, sizeof(is_bind_mounted));
+                if ( initial_in_bytes == 0 ) break;
+                in_bytes += initial_in_bytes; expect_bytes += sizeof(is_bind_mounted);
+                
+                /* Allocate a node: */
+                auto_tmpdir_fs_bindpoint_t  *bindpoint_node = calloc(1, sizeof(auto_tmpdir_fs_bindpoint_t));
+                if ( ! bindpoint_node ) {
+                    slurm_error("auto_tmpdir::auto_tmpdir_fs_init_with_file: failed to allocate auto_tmpdir_fs bindpoint node");
+                    rc = 1; goto early_exit;
+                }
+                
+                /* Read the rest of the fields: */
+                bindpoint_node->is_bind_mounted = is_bind_mounted;
+                AUTO_TMPDIR_FS_UNSERIALIZE(bindpoint_node->should_always_remove);
+                AUTO_TMPDIR_FS_UNSERIALIZE_CSTR(bindpoint_node->bind_this_path);
+                AUTO_TMPDIR_FS_UNSERIALIZE_CSTR(bindpoint_node->to_this_path);
+                bindpoint_node->link = bindpoint_node->back_link = NULL;
+                
+                if ( ! new_fs->bind_mounts_tail ) new_fs->bind_mounts_tail = bindpoint_node;
+                if ( new_fs->bind_mounts ) new_fs->bind_mounts->back_link = bindpoint_node;
+                bindpoint_node->link = new_fs->bind_mounts;
+                new_fs->bind_mounts = bindpoint_node;
+            }
+            
+        } else {
+            slurm_error("auto_tmpdir::auto_tmpdir_fs_init_with_file: failed to allocate auto_tmpdir_fs");
+            goto early_exit;
+        }
+        
+early_exit:
+        close(state_file_fd);
+        if ( rc ) {
+            /* Dispose of new_fs: */
+            if ( new_fs ) {
+                auto_tmpdir_fs_bindpoint_t  *bindpoint_node = new_fs->bind_mounts;
+                
+                while ( bindpoint_node ) {
+                    auto_tmpdir_fs_bindpoint_t  *next = bindpoint_node->link;
+                    
+                    if ( bindpoint_node->bind_this_path ) free((void*)bindpoint_node->bind_this_path);
+                    if ( bindpoint_node->to_this_path ) free((void*)bindpoint_node->to_this_path);
+                    free((void*)bindpoint_node);
+                    bindpoint_node = next;
+                }
+                if ( new_fs->tmpdir ) free((void*)new_fs->tmpdir);
+                if ( new_fs->base_dir ) free((void*)new_fs->base_dir);
+                if ( new_fs->base_dir_parent ) free((void*)new_fs->base_dir_parent);
+                free((void*)new_fs);
+                new_fs = NULL;
+            }
+        }
+    } else {
+        slurm_error("auto_tmpdir::auto_tmpdir_fs_init_with_file: unable to open state file `%s` (errno = %d)", filepath, errno);
+    }
+    
+    if ( remove_state_file && filepath ) {
+        unlink(filepath);
+    }
+    
+    return new_fs;
 }

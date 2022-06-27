@@ -87,11 +87,7 @@ struct spank_option spank_options[] =
 
 #ifdef AUTO_TMPDIR_ENABLE_SHARED_TMPDIR
         { "use-shared-tmpdir", NULL,
-#ifdef HAVE_SPANK_JOB_ARRAY_IDS
-            "Create temporary directories on shared storage (overridden by --tmpdir).  Use \"--use-shared-tmpdir=per-node\" to create unique sub-directories for each node allocated to the job (e.g. <base><job-id>{.<array-task-id>}/<nodename>).",
-#else
             "Create temporary directories on shared storage.  Use \"--use-shared-tmpdir=per-node\" to create unique sub-directories for each node allocated to the job (e.g. <base><job-id>/<nodename>).",
-#endif
             2, 0, (spank_opt_cb_f) _opt_use_shared_tmpdir },
 #endif
 
@@ -109,8 +105,7 @@ struct spank_option spank_options[] =
  * registered as they do under LOCAL and REMOTE.  So under that context
  * we explicitly register our cli options.
  *
- * In the REMOTE context, go ahead and create the temp directory and
- * assign appropriate ownership.
+ * In the REMOTE context, go ahead and check the SPANK env for our options.
  *
  */
 int
@@ -155,8 +150,46 @@ slurm_spank_init(
 
 
 /*
+ * @function slurm_spank_job_prolog
+ *
+ * In the prolog we create the hierarchy of bind-mounted directories for the job but we
+ * DO NOT bind-mount them.  It wouldn't do much anyway, since the job_script context isn't
+ * where we'll end up running the job steps.
+ *
+ * If we're able to create the hierarchy, let's serialize it to a file so we can
+ * reconstitute in the job step and later in the epilog context.
+ */
+int
+slurm_spank_job_prolog(
+    spank_t         spank_ctxt,
+    int             argc,
+    char            *argv[]
+)
+{
+    int             rc = ESPANK_SUCCESS;
+
+    /* We only want to run in the job_script context: */
+    if ( spank_context() == S_CTX_JOB_SCRIPT ) {
+        auto_tmpdir_fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
+
+        if ( ! auto_tmpdir_fs_info ) {
+            slurm_error("auto_tmpdir::slurm_spank_job_prolog: failure to create fs info");
+            rc = ESPANK_ERROR;
+        }
+        else if ( auto_tmpdir_fs_serialize_to_file(auto_tmpdir_fs_info, spank_ctxt, argc, argv, NULL) != 0 ) {
+            slurm_error("auto_tmpdir::slurm_spank_job_prolog: failure to serialize fs info");
+            rc = ESPANK_ERROR;
+        }
+    }
+    return rc;
+}
+
+/*
  * @function slurm_spank_init_post_opt
  *
+ * At this point we're in a slurmstepd just prior to transitioning to the user
+ * credentials.  Now's the right time to pull the cached bind-mount hierarchy
+ * back off disk and do all the bind mounts.
  */
 int
 slurm_spank_init_post_opt(
@@ -169,7 +202,7 @@ slurm_spank_init_post_opt(
 
     /* We only want to run in the remote context: */
     if ( spank_remote(spank_ctxt) ) {
-        auto_tmpdir_fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
+        auto_tmpdir_fs_info = auto_tmpdir_fs_init_with_file(spank_ctxt, argc, argv, auto_tmpdir_options, NULL, 0);
 
         rc = ESPANK_ERROR;
         if ( auto_tmpdir_fs_info && (auto_tmpdir_fs_bind_mount(auto_tmpdir_fs_info) == 0) ) {
@@ -185,27 +218,27 @@ slurm_spank_init_post_opt(
 
 
 /*
- * @function slurm_spank_exit
+ * @function slurm_spank_job_epilog
  *
- * Remove the job's temporary directory and any bind mountpoints.
+ * In the epilog we pull the cached bind-mount hierarchy back off disk and
+ * destroy all the directories we created.
  */
 int
-slurm_spank_exit(
+slurm_spank_job_epilog(
     spank_t         spank_ctxt,
     int             argc,
     char            *argv[]
 )
 {
-    if ( spank_remote(spank_ctxt) && auto_tmpdir_fs_info ) {
-        uint32_t    job_step_id;
-        int         rc;
-
-        if ( (rc = spank_get_item(spank_ctxt, S_JOB_STEPID, &job_step_id)) != ESPANK_SUCCESS ) {
-            slurm_error("auto_tmpdir::slurm_spank_exit: no step id associated with job??");
-            return rc;
+    int             rc = ESPANK_SUCCESS;
+    
+    if ( spank_context() == S_CTX_JOB_SCRIPT ) {
+        auto_tmpdir_fs_info = auto_tmpdir_fs_init_with_file(spank_ctxt, argc, argv, auto_tmpdir_options, NULL, 1);
+        
+        rc = ESPANK_ERROR;
+        if ( auto_tmpdir_fs_info && (auto_tmpdir_fs_fini(auto_tmpdir_fs_info, 0) == 0) ) {
+            rc = ESPANK_SUCCESS;
         }
-        slurm_debug("auto_tmpdir::slurm_spank_exit: checking for cleanup, step %u == %u", job_step_id, auto_tmpdir_cleanup_in_step);
-        if ( (job_step_id == auto_tmpdir_cleanup_in_step) && (auto_tmpdir_fs_fini(auto_tmpdir_fs_info, 0) != 0) ) return ESPANK_ERROR;
     }
-    return ESPANK_SUCCESS;
+    return rc;
 }
