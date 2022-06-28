@@ -87,7 +87,7 @@ auto_tmpdir_fs_bindpoint_dealloc(
         if ( ! should_dealloc_only ) {
             if ( bindpoint->is_bind_mounted ) {
                 if ( umount2(bindpoint->to_this_path, MNT_FORCE) != 0 ) {
-                    slurm_warning("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: unable to unmount bind point `%s` -> `%s`", bindpoint->to_this_path, bindpoint->bind_this_path);
+                    slurm_info("auto_tmpdir::auto_tmpdir_fs_bindpoint_dealloc: unable to unmount bind point `%s` -> `%s`", bindpoint->to_this_path, bindpoint->bind_this_path);
                     rc = -1;
                     is_okay = 0;
                     /*  Attempt to remove the bound path itself to drop all content: */
@@ -228,7 +228,7 @@ force_chown:
         }
         slurm_debug("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: set ownership %d:%d on directory `%s`", u_owner, g_owner, bind_this_path);
     } else if ( ! S_ISDIR(finfo.st_mode) ) {
-        slurm_warning("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: path `%s` exists but is not a directory", bind_this_path);
+        slurm_info("auto_tmpdir::__auto_tmpdir_fs_create_bindpoint: path `%s` exists but is not a directory", bind_this_path);
 
         /*
          * Attempt to remove the offending file, socket, whatever:
@@ -413,7 +413,7 @@ auto_tmpdir_fs_init(
                  * Make sure we haven't already registered it:
                  */
                 if ( auto_tmpdir_fs_bindpoint_find_to_path(new_fs->bind_mounts, bind_to, bind_to_len) ) {
-                    slurm_warning("auto_tmpdir::auto_tmpdir_fs_init: ignoring repeated mount in plugstack configuration (%s)", bind_to);
+                    slurm_info("auto_tmpdir::auto_tmpdir_fs_init: ignoring repeated mount in plugstack configuration (%s)", bind_to);
                     i++;
                     continue;
                 }
@@ -558,7 +558,7 @@ auto_tmpdir_fs_init(
                     goto error_out;
                 }
             } else {
-                slurm_warning("auto_tmpdir::auto_tmpdir_fs_init: shm base directory `%s` does not exist", auto_tmpdir_fs_dev_shm);
+                slurm_info("auto_tmpdir::auto_tmpdir_fs_init: shm base directory `%s` does not exist", auto_tmpdir_fs_dev_shm);
                 goto error_out;
             }
         }

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - Modified CMake spec to search for slurm/task_none.so rather than lib/slurm (better portability)
+- Replaced slurm_warning() calls in fs-utils.c with slurm_info()
 
 
 ## [1.0.0] - 2022-06-27
