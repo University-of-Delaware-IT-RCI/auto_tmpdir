@@ -112,7 +112,7 @@ The build system is configured via CMake.  The [CMakeLists.txt](./CMakeLists.txt
 | `AUTO_TMPDIR_DEV_SHM` | Directory under which shared memory files are created. | `/dev/shm` if it exists |
 | `AUTO_TMPDIR_DEFAULT_LOCAL_PREFIX` | Path prefix to which job id is appended to create the per-job temp directory.  E.g. `/tmp/slurm-` yields directories like `/tmp/slurm-<jobid>` while `/tmp/slurm/` would produce the deeper path `/tmp/slurm/<jobid>` | `/tmp/slurm-` |
 | `AUTO_TMPDIR_ENABLE_SHARED_TMPDIR` | Enables an alternate directory hierarchy (typically on network-shared media) available for temp directories at the user's request. | OFF |
-| `AUTO_TMPDIR_ENABLE_SHARED_TMPDIR` | If the alternate directory hierarchy is enabled, this is its equivalent to `AUTO_TMPDIR_DEFAULT_LOCAL_PREFIX` | |
+| `AUTO_TMPDIR_DEFAULT_SHARED_PREFIX` | If the alternate directory hierarchy is enabled, this is its equivalent to `AUTO_TMPDIR_DEFAULT_LOCAL_PREFIX` | |
 | `AUTO_TMPDIR_NO_GID_CHOWN` | The temporary directories created by the plugin will *not* be reowned to the job's gid; this option is always ON for Slurm releases < 20 | OFF |
 
 On our clusters we build and install Slurm to `/opt/shared/slurm/<version>` and have local SSD storage on compute nodes mounted as `/tmp`.  CentOS does present the `/dev/shm` mountpoint for shared memory files.  We also have a special area set aside on our Lustre file system for shared temp directories.  Thus, setup of a build environment for Slurm looks like this:
