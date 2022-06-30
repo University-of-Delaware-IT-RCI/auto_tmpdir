@@ -159,6 +159,16 @@ Install the project...
 -- Installing: /opt/shared/slurm/20.11.5/lib/slurm/auto_tmpdir.so
 ```
 
-The plugin is enabled by adding it to your `plugstack.conf` file on all nodes.
+With each upgrade to Slurm a new `build-<version>` directory should be created and the build done therein.
 
-With each upgrade to Slurm a new `build-<version>` directory is created and the build is done therein.
+## Configure the plugin
+
+The plugin is enabled by adding it to your `plugstack.conf` file on all nodes.  An example configuration that will bind-mount `/tmp`, `/var/tmp`, and `/dev/shm` directories for each job:
+
+```
+required        auto_tmpdir.so          mount=/tmp mount=/var/tmp
+```
+
+## Restart daemons
+
+The `slurmd` daemons on compute nodes must be restarted for the plugin to be loaded when subsequent job steps are launched.
