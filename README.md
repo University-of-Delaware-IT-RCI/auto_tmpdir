@@ -107,8 +107,8 @@ The build system is configured via CMake.  The [CMakeLists.txt](./CMakeLists.txt
 
 | Variable | Discussion | Default |
 | --- | --- | --- |
-| `SLURM_PREFIX` | Path at which Slurm is installed; the plugin will get installed to `${SLURM_PREFIX}/lib/slurm`, linked against libraries in `${SLURM_PREFIX}/lib`, and headers will be used from `${SLURM_PREFIX}/include`. | `/usr/local` |
-| `SHARED_LIB_SUFFIX` | Suffix used on the plugin binary | `.so` |
+| `SLURM_PREFIX` | Path at which Slurm is installed; the plugin is linked against libraries in `${SLURM_PREFIX}/lib` (or `lib64` in some cases), and headers will be used from `${SLURM_PREFIX}/include`. | `/usr/local` |
+| `SLURM_MODULES_DIR` | Path into which the plugin will be installed; if not explicitly defined by the user, CMake will search for a file named `slurm/task_none.so` in the same directory that holds the `libslurm.so` that `auto_tmpdir` will link against. | `${SLURM_PREFIX}/lib/slurm` |
 | `AUTO_TMPDIR_DEV_SHM` | Directory under which shared memory files are created. | `/dev/shm` if it exists |
 | `AUTO_TMPDIR_DEFAULT_LOCAL_PREFIX` | Path prefix to which job id is appended to create the per-job temp directory.  E.g. `/tmp/slurm-` yields directories like `/tmp/slurm-<jobid>` while `/tmp/slurm/` would produce the deeper path `/tmp/slurm/<jobid>` | `/tmp/slurm-` |
 | `AUTO_TMPDIR_ENABLE_SHARED_TMPDIR` | Enables an alternate directory hierarchy (typically on network-shared media) available for temp directories at the user's request. | OFF |
@@ -133,6 +133,8 @@ $ cmake -DSLURM_PREFIX=/opt/shared/slurm/20.11.5 -DCMAKE_BUILD_TYPE=Release \
 -- Detecting C compiler ABI info
 -- Detecting C compiler ABI info - done
 -- Found SLURM: /opt/shared/slurm/20.11.5/lib/libslurm.so  
+-- SLURM modules directory: /opt/shared/slurm/20.11.5/lib/slurm
+-- SLURM version detected as 20.11.5
 -- Configuring done
 -- Generating done
 -- Build files have been written to: /opt/shared/slurm/add-ons/auto_tmpdir/build-20.11.5
@@ -160,6 +162,109 @@ Install the project...
 ```
 
 With each upgrade to Slurm a new `build-<version>` directory should be created and the build done therein.
+
+### Building an RPM
+
+The CMake CPack module can be used to produce an RPM file.  After CMake configuration of the build, a spec file will be present in the build directory:
+
+```
+$ cmake -DSLURM_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release \
+    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=YES \
+    -DAUTO_TMPDIR_DEFAULT_SHARED_PREFIX=/lustre/slurm \
+	..
+	
+$ cat auto_tmpdir.spec 
+Buildroot:      /tmp/auto_tmpdir/build-20.11.5.2/_CPack_Packages/Linux/RPM/auto_tmpdir-1.0.1-20.11.5.x86_64
+Summary:        Slurm auto_tmpdir SPANK plugin
+Name:           auto_tmpdir
+Version:        1.0.1
+Release:        20.11.5
+License:        BSD
+Group:          Unspecified
+Prefix:         /usr/lib64/slurm
+Requires:       slurm == 20.11.5
+   :
+```
+
+The RPM is created via `make package` and, if successful, the RPM file will be present in the build directory:
+
+```
+$ make package
+[ 33%] Building C object CMakeFiles/auto_tmpdir.dir/fs-utils.c.o
+[ 66%] Building C object CMakeFiles/auto_tmpdir.dir/auto_tmpdir.c.o
+[100%] Linking C shared module auto_tmpdir.so
+[100%] Built target auto_tmpdir
+Run CPack packaging tool...
+CPack: Create package using RPM
+CPack: Install projects
+CPack: - Run preinstall target for: auto_tmpdir
+CPack: - Install project: auto_tmpdir []
+CPack: Create package
+CPackRPM: Will use USER specified spec file: /tmp/auto_tmpdir/build-20.11.5.2/auto_tmpdir.spec
+CPack: - package: /tmp/auto_tmpdir/build-20.11.5.2/auto_tmpdir-1.0.1-20.11.5.x86_64.rpm generated.
+
+$ rpm -qip auto_tmpdir-1.0.1-1.x86_64.rpm 
+Name        : auto_tmpdir
+Version     : 1.0.1
+Release     : 20.11.5
+Architecture: x86_64
+Install Date: (not installed)
+Group       : Unspecified
+Size        : 36256
+License     : BSD
+Signature   : (none)
+Source RPM  : auto_tmpdir-1.0.1-20.11.5.src.rpm
+Build Date  : Thu 30 Jun 2022 01:47:44 PM EDT
+Build Host  : r0login0.localdomain.hpc.udel.edu
+Relocations : /usr/lib64/slurm 
+Summary     : Slurm auto_tmpdir SPANK plugin
+Description :
+The auto_tmpdir SPANK plugin facilitates the automatic creation/removal of bind-mounted directories for Slurm jobs.
+```
+
+Since the capabilities of the SPANK plugin API have changed over time, it's a good idea to match the plugin with the Slurm version.  The CMake configuration by default adds this to the `Requires:` line in the RPM spec file and uses the Slurm version as the release id on the package.  This behavior can be overridden by setting the `AUTO_TMPDIR_RPM_IGNORE_SLURM_VERSION` flag and optionally specifying a release:
+
+```
+$ cmake -DSLURM_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release \
+    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=YES \
+    -DAUTO_TMPDIR_DEFAULT_SHARED_PREFIX=/lustre/slurm \
+    -DAUTO_TMPDIR_RPM_IGNORE_SLURM_VERSION=YES \
+    -DAUTO_TMPDIR_RPM_RELEASE=1 \
+	..
+	
+$ cat auto_tmpdir.spec
+Buildroot:      /opt/shared/slurm/add-ons/auto_tmpdir/build-20.11.5.2/_CPack_Packages/Linux/RPM/auto_tmpdir-1.0.1-1.x86_64
+Summary:        Slurm auto_tmpdir SPANK plugin
+Name:           auto_tmpdir
+Version:        1.0.1
+Release:        1
+License:        BSD
+Group:          Unspecified
+Prefix:         /usr/lib64/slurm
+Requires:       slurm
+   :
+   
+$ make package
+   :
+   
+$ rpm -qip auto_tmpdir-1.0.1-1.x86_64.rpm 
+Name        : auto_tmpdir
+Version     : 1.0.1
+Release     : 1
+Architecture: x86_64
+Install Date: (not installed)
+Group       : Unspecified
+Size        : 36256
+License     : BSD
+Signature   : (none)
+Source RPM  : auto_tmpdir-1.0.1-1.src.rpm
+Build Date  : Thu 30 Jun 2022 02:07:38 PM EDT
+Build Host  : r0login0.localdomain.hpc.udel.edu
+Relocations : /usr/lib64/slurm
+Summary     : Slurm auto_tmpdir SPANK plugin
+Description :
+The auto_tmpdir SPANK plugin facilitates the automatic creation/removal of bind-mounted directories for Slurm jobs.
+```
 
 ## Configure the plugin
 
