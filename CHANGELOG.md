@@ -5,9 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.0.1] - 2022-07-05
+### Added
+- LICENSE file (BSD 2-clause)
+- CPack RPM generation components
+
 ### Changed
 - Modified CMake spec to search for slurm/task_none.so rather than lib/slurm (better portability)
 - Replaced slurm_warning() calls in fs-utils.c with slurm_info()
+- Use PROJECT_* rather than CMAKE_PROJECT_* for older CMake compatibility
+- CMake minimum version bumped to 3.6 for CPack (older versions did not work properly under testing)
 
 
 ## [1.0.0] - 2022-06-27
