@@ -163,9 +163,9 @@ Install the project...
 
 With each upgrade to Slurm a new `build-<version>` directory should be created and the build done therein.
 
-### Building an RPM
+### Building an DEB / RPM
 
-The CMake CPack module can be used to produce an RPM file.  After CMake configuration of the build, a spec file will be present in the build directory:
+The CMake CPack module can be used to produce an DEB or RPM file. The default is RPM. After CMake configuration of the build, a spec file will be present in the build directory:
 
 ```
 $ cmake -DSLURM_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release \
@@ -264,6 +264,11 @@ Relocations : /usr/lib64/slurm
 Summary     : Slurm auto_tmpdir SPANK plugin
 Description :
 The auto_tmpdir SPANK plugin facilitates the automatic creation/removal of bind-mounted directories for Slurm jobs.
+```
+
+For bulding a DEB package instead you can overwrite the cpack generator:
+```
+-DCPACK_GENERATOR=DEB
 ```
 
 ## Configure the plugin
