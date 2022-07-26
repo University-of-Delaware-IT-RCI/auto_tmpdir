@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2022-07026
+### Added
+- CPack DEB generation support
+
+### Changed
+- CPack per-format directives split out into distinct files under `cmake/cpack-formats`
+- Slurm version check program altered to selectively output XX.YY.Z, XX.YY, or XX formats
+
+
 ## [1.0.1] - 2022-07-05
 ### Added
 - LICENSE file (BSD 2-clause)

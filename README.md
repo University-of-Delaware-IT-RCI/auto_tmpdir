@@ -123,7 +123,7 @@ $ cd auto_tmpdir
 $ mkdir build-20220627
 $ cd build-20220627
 $ cmake -DSLURM_PREFIX=/opt/shared/slurm/20.11.5 -DCMAKE_BUILD_TYPE=Release \
-    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=YES \
+    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=On \
     -DAUTO_TMPDIR_DEFAULT_SHARED_PREFIX=/lustre/slurm \
 	..
 	
@@ -163,14 +163,19 @@ Install the project...
 
 With each upgrade to Slurm a new `build-<version>` directory should be created and the build done therein.
 
-### Building an DEB / RPM
+### Building Packages for Distribution
 
-The CMake CPack module can be used to produce an DEB or RPM file. The default is RPM. After CMake configuration of the build, a spec file will be present in the build directory:
+The CMake CPack module can be used to produce DEB or RPM package files.  The variant can be provided explicitly by providing a value for `CPACK_GENERATOR`; it defaults to RPM.
+
+#### RPM
+
+After CMake configuration of the build, a spec file will be present in the build directory:
 
 ```
 $ cmake -DSLURM_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release \
-    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=YES \
+    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=On \
     -DAUTO_TMPDIR_DEFAULT_SHARED_PREFIX=/lustre/slurm \
+    -DCPACK_GENERATOR=RPM \
 	..
 	
 $ cat auto_tmpdir.spec 
@@ -222,13 +227,13 @@ Description :
 The auto_tmpdir SPANK plugin facilitates the automatic creation/removal of bind-mounted directories for Slurm jobs.
 ```
 
-Since the capabilities of the SPANK plugin API have changed over time, it's a good idea to match the plugin with the Slurm version.  The CMake configuration by default adds this to the `Requires:` line in the RPM spec file and uses the Slurm version as the release id on the package.  This behavior can be overridden by setting the `AUTO_TMPDIR_RPM_IGNORE_SLURM_VERSION` flag and optionally specifying a release:
+Since the capabilities of the SPANK plugin API have changed over time, it's a good idea to match the plugin with the Slurm version.  The CMake configuration by default adds this to the `Requires:` line in the RPM spec file and uses the Slurm version as the release id on the package.  This behavior can be overridden by setting the `AUTO_TMPDIR_CPACK_IGNORE_SLURM_VERSION` flag and optionally specifying a release:
 
 ```
 $ cmake -DSLURM_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release \
-    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=YES \
+    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=On \
     -DAUTO_TMPDIR_DEFAULT_SHARED_PREFIX=/lustre/slurm \
-    -DAUTO_TMPDIR_RPM_IGNORE_SLURM_VERSION=YES \
+    -DAUTO_TMPDIR_CPACK_IGNORE_SLURM_VERSION=On \
     -DAUTO_TMPDIR_RPM_RELEASE=1 \
 	..
 	
@@ -266,10 +271,30 @@ Description :
 The auto_tmpdir SPANK plugin facilitates the automatic creation/removal of bind-mounted directories for Slurm jobs.
 ```
 
-For bulding a DEB package instead you can overwrite the cpack generator:
+#### DEB
+
+Building a DEB package proceeds in much the same way as for an RPM.  The `CPACK_GENERATOR` must be explicitly specified:
+
 ```
--DCPACK_GENERATOR=DEB
+$ cmake -DSLURM_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release \
+    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=On \
+    -DAUTO_TMPDIR_DEFAULT_SHARED_PREFIX=/lustre/slurm \
+    -DCPACK_GENERATOR=DEB \
+        ..
 ```
+
+By default the generated package will depend on the presence of a compatible version of `slurmd` being present on the system, where compatiblity is established by a match of the major and minor version of Slurm alone.  Additionally, the name of the package will include the version of Slurm as the release number.  The version dependency and release number can be omitted if desired by setting `AUTO_TMPDIR_CPACK_IGNORE_SLURM_VERSION` when configuring:
+
+```
+$ cmake -DSLURM_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release \
+    -DAUTO_TMPDIR_ENABLE_SHARED_TMPDIR=On \
+    -DAUTO_TMPDIR_DEFAULT_SHARED_PREFIX=/lustre/slurm \
+    -DAUTO_TMPDIR_CPACK_IGNORE_SLURM_VERSION=On \
+    -DCPACK_GENERATOR=DEB \
+        ..
+```
+
+As with the RPM package, use `make package` to generate the `.deb` file.
 
 ## Configure the plugin
 
