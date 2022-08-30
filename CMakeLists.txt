@@ -1,5 +1,5 @@
 CMAKE_MINIMUM_REQUIRED (VERSION 3.6)
-PROJECT (auto_tmpdir VERSION 1.0.1 LANGUAGES C)
+PROJECT (auto_tmpdir VERSION 1.0.2 LANGUAGES C)
 
 #
 # For finding packages:
