@@ -34,6 +34,3 @@ mv "@CMAKE_CURRENT_BINARY_DIR@/_CPack_Packages/Linux/RPM/tmpBBroot" $RPM_BUILD_R
 %defattr(-,root,root,-)
 @CPACK_PACKAGING_INSTALL_PREFIX@/auto_tmpdir.so
  
-%changelog
-* Thu Jun 30 2022 Jeffrey Frey <frey@udel.edu> 1.0.1
-- first release with RPM build capability
