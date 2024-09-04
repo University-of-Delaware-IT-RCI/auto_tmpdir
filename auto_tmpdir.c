@@ -60,7 +60,7 @@ static int _opt_use_shared_tmpdir(
     /*
      * Check the optarg to see if "per-node" is being requested:
      */
-    if ( optarg && strcmp(optarg, "(null)") ) {
+    if ( optarg && (*optarg && strcmp(optarg, "(null)")) ) {
         if ( strcmp(optarg, "per-node") == 0 ) {
             auto_tmpdir_options |= auto_tmpdir_fs_options_should_use_per_host;
         } else {
@@ -127,24 +127,6 @@ slurm_spank_init(
             break;
         }
 
-        case S_CTX_REMOTE:
-        case S_CTX_JOB_SCRIPT: {
-            char            v[PATH_MAX];
-
-            //
-            // Check for our arguments in the environment:
-            //
-            if ( spank_getenv(spank_ctxt, "SLURM_SPANK__SLURM_SPANK_OPTION_auto_tmpdir_no_rm_tmpdir", v, sizeof(v)) == ESPANK_SUCCESS ) {
-                rc = _opt_no_rm_tmpdir(0, v, 1);
-            }
-#ifdef AUTO_TMPDIR_ENABLE_SHARED_TMPDIR
-            if ( (rc == ESPANK_SUCCESS) && (spank_getenv(spank_ctxt, "SLURM_SPANK__SLURM_SPANK_OPTION_auto_tmpdir_use_shared_tmpdir", v, sizeof(v)) == ESPANK_SUCCESS) ) {
-                rc = _opt_use_shared_tmpdir(0, v, 1);
-            }
-#endif
-            break;
-        }
-
     }
     return rc;
 }
@@ -171,6 +153,16 @@ slurm_spank_job_prolog(
 
     /* We only want to run in the job_script context: */
     if ( spank_context() == S_CTX_JOB_SCRIPT ) {
+        struct spank_option   *o = spank_options;
+
+        /* Process CLI options: */
+        while ( o->name && (rc == ESPANK_SUCCESS) ) {
+            char              *optval;
+            spank_err_t       rc_spank = spank_option_getopt(spank_ctxt, o, &optval);
+            if ( rc_spank == ESPANK_SUCCESS ) rc = o->cb(o->val, optval, 1);
+            o++;
+        }
+        
         auto_tmpdir_fs_info = auto_tmpdir_fs_init(spank_ctxt, argc, argv, auto_tmpdir_options);
 
         if ( ! auto_tmpdir_fs_info ) {
@@ -234,6 +226,16 @@ slurm_spank_job_epilog(
     int             rc = ESPANK_SUCCESS;
     
     if ( spank_context() == S_CTX_JOB_SCRIPT ) {
+        struct spank_option   *o = spank_options;
+
+        /* Process CLI options: */
+        while ( o->name && (rc == ESPANK_SUCCESS) ) {
+            char              *optval;
+            spank_err_t       rc_spank = spank_option_getopt(spank_ctxt, o, &optval);
+            if ( rc_spank == ESPANK_SUCCESS ) rc = o->cb(o->val, optval, 1);
+            o++;
+        }
+
         auto_tmpdir_fs_info = auto_tmpdir_fs_init_with_file(spank_ctxt, argc, argv, auto_tmpdir_options, NULL, 1);
         
         rc = ESPANK_ERROR;
