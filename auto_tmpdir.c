@@ -127,7 +127,8 @@ slurm_spank_init(
             break;
         }
 
-        case S_CTX_REMOTE: {
+        case S_CTX_REMOTE:
+        case S_CTX_JOB_SCRIPT: {
             char            v[PATH_MAX];
 
             //
